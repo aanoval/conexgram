@@ -15,8 +15,6 @@ Keep coding sessions running on your own computer and manage them from your phon
 Telegram -> Conexgram -> Codex CLI -> your local workspace -> Telegram
 ```
 
-Demo GIF: coming soon. See `docs/demo-script.md` for the capture flow.
-
 ## Why Conexgram?
 
 Conexgram lets you keep Codex running on your own computer while you manage coding sessions from Telegram. It is useful when you want to check builds, ask Codex to inspect a project, continue a coding session, or run supervised automation without opening your laptop.
@@ -55,16 +53,15 @@ Telegram message
   -> Telegram reply
 ```
 
-## Demo idea
+## What you can do from Telegram
 
-For a public launch, add a short GIF or video showing:
-
-1. Sending `/settings` in Telegram
-2. Asking Codex to inspect a local project
-3. Seeing typing/progress indicators
-4. Receiving the final Codex response
-
-See `docs/demo.md`.
+- Start and resume Codex sessions
+- Switch between safe, work, fast, power, and Computer Access presets
+- Change model and reasoning effort per session
+- Upload files into the active workspace
+- Send local files back to Telegram
+- Watch long-running tasks with typing and progress indicators
+- Stop a running Codex turn from your phone
 
 Conexgram keeps two layers of state:
 

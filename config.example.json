@@ -1,0 +1,84 @@
+{
+  "telegram": {
+    "bot_token": "REPLACE_WITH_BOTFATHER_TOKEN",
+    "allowed_user_ids": [
+      123456789
+    ],
+    "allowed_chat_ids": [],
+    "poll_timeout_seconds": 30
+  },
+  "codex": {
+    "binary": "codex",
+    "default_working_dir": "~/ConexgramWorkspace",
+    "model": "",
+    "reasoning_effort": "medium",
+    "mode": "safe",
+    "fast_mode": false,
+    "full_access": false,
+    "allow_runtime_full_access": false,
+    "max_turn_seconds": 1800,
+    "skip_git_repo_check": true,
+    "additional_writable_dirs": [
+      "/path/to/extra/writable-dir"
+    ],
+    "workspace_roots": [
+      "~/ConexgramWorkspace"
+    ],
+    "model_presets": {
+      "default": "",
+      "fast": "gpt-5.4-mini",
+      "power": "gpt-5.2"
+    },
+    "presets": {
+      "safe": {
+        "mode": "safe",
+        "full_access": false,
+        "reasoning_effort": "medium"
+      },
+      "work": {
+        "mode": "workspace",
+        "full_access": false,
+        "reasoning_effort": "medium"
+      },
+      "fast": {
+        "mode": "safe",
+        "fast_mode": true,
+        "reasoning_effort": "low"
+      },
+      "power": {
+        "mode": "workspace",
+        "fast_mode": false,
+        "reasoning_effort": "high"
+      },
+      "computer": {
+        "mode": "full",
+        "full_access": true,
+        "reasoning_effort": "high"
+      }
+    },
+    "base_prompt": "You are Codex CLI running through Conexgram. Treat Telegram messages as user instructions. Keep context inside the current session. Be concise in final replies and report verified command results."
+  },
+  "gateway": {
+    "state_dir": "~/.conexgram",
+    "session_scope": "chat",
+    "send_ack": true,
+    "max_telegram_message_chars": 3900,
+    "max_upload_bytes": 20971520,
+    "worker_count": 1,
+    "max_log_days": 14,
+    "max_log_mb": 100,
+    "log_level": "INFO"
+  },
+  "progress": {
+    "typing_indicator": true,
+    "typing_interval_seconds": 4,
+    "progress_messages": true,
+    "progress_interval_seconds": 60,
+    "messages": [
+      "Still working on it...",
+      "Codex is still running. I will send the result when it finishes.",
+      "Still active, waiting for Codex to finish.",
+      "Processing is taking longer than usual, but the session is still running."
+    ]
+  }
+}

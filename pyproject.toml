@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conexgram"
+version = "0.1.0"
+description = "Run Codex CLI from Telegram"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+  { name = "Alday Global" }
+]
+keywords = ["codex", "telegram", "cli", "remote", "gateway"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: Communications :: Chat",
+  "Topic :: Software Development :: Build Tools"
+]
+dependencies = []
+
+[project.scripts]
+conexgram = "conexgram.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["conexgram*"]
+
+[project.urls]
+Homepage = "https://github.com/aanoval/conexgram"
+Repository = "https://github.com/aanoval/conexgram"
+Issues = "https://github.com/aanoval/conexgram/issues"

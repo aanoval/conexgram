@@ -5,9 +5,9 @@
 [![Python](https://img.shields.io/pypi/pyversions/conexgram.svg)](https://pypi.org/project/conexgram/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Conexgram lets you **run Codex CLI from Telegram**.
+Run Codex CLI from Telegram.
 
-Keep coding sessions running on your own computer and manage them from your phone.
+Conexgram keeps coding sessions running on your own computer and lets you manage them from your phone.
 
 > Your code, credentials, and compute stay local.
 
@@ -15,32 +15,56 @@ Keep coding sessions running on your own computer and manage them from your phon
 Telegram -> Conexgram -> Codex CLI -> your local workspace -> Telegram
 ```
 
+## Install in 3 minutes
+
+Recommended:
+
+```bash
+curl -fsSL https://conexgram.com/install.sh | bash
+```
+
+Or with `pipx`:
+
+```bash
+pipx install conexgram
+conexgram setup
+conexgram doctor --fix
+conexgram install-service
+```
+
+Run in the foreground instead of installing a service:
+
+```bash
+conexgram run
+```
+
+Then send `/start` or `/settings` to your Telegram bot.
+
+If the bot says you are unauthorized, it will show your Telegram user ID and chat ID. Add one of those IDs to `~/.conexgram/config.json`.
+
 ## Why Conexgram?
 
-Conexgram lets you keep Codex running on your own computer while you manage coding sessions from Telegram. It is useful when you want to check builds, ask Codex to inspect a project, continue a coding session, or run supervised automation without opening your laptop.
+Conexgram is useful when you want Codex to stay attached to your real local workspace while Telegram becomes the remote control surface. It is a good fit when you want to inspect a codebase, continue a session, check progress, or run supervised automation without opening your laptop.
 
 Good fits:
 
-- remote coding assistant for a personal workstation
+- personal remote coding assistant for your workstation
 - lightweight DevOps helper for trusted private machines
 - Telegram-controlled Codex sessions for long-running work
-- simple bridge for experimenting with future multi-agent workflows
+- local-first bridge for future multi-agent workflows
 
 ## Features
 
 - Telegram bot -> Codex CLI bridge
 - Persistent Codex sessions per chat or per user
-- `/new`, `/status`, `/sessions`, `/switch`, `/cwd`, `/workspace`
-- `/model`, `/models`, `/reasoning`, `/mode`, `/preset`, `/fast`, `/fullaccess`, `/computer`
-- `/settings`, `/permissions`, `/rename`, `/summary`, `/reset`, `/logs`, `/doctor`, `/version`
-- `/typing`, `/progress`, `/silent`
-- Optional local file send-back with `/sendfile`
+- Session controls like `/new`, `/status`, `/sessions`, `/switch`, `/workspace`
+- Runtime controls like `/model`, `/reasoning`, `/mode`, `/preset`, `/fast`
+- Progress UX like `/typing`, `/progress`, `/silent`, `/tail`
 - Telegram file upload into the active workspace
-- Optional Telegram typing indicator while Codex is running
-- Optional random progress messages for long-running Codex turns
+- Optional local file send-back with `/sendfile`
+- Works in the foreground or as an auto-start service on macOS, Linux, or Windows
 - No third-party Python dependencies
-- Works in foreground or as an auto-start service on macOS, Linux, or Windows
-- Modular Python internals with a small agent-profile foundation for future multi-agent routing
+- Small modular Python internals with room for future agent routing
 
 ## How it works
 
@@ -68,6 +92,17 @@ Conexgram keeps two layers of state:
 - **Gateway session**: local session record managed by Conexgram
 - **Codex thread**: actual Codex CLI thread id used for resume/continuation
 
+## Security model
+
+Conexgram is remote-control software. Treat it like operator tooling, not a public chatbot.
+
+- Your code, credentials, and compute stay on your own machine
+- Telegram access should be restricted with `allowed_user_ids` or `allowed_chat_ids`
+- Workspace mode is the recommended default
+- Full access and Computer Access require explicit local opt-in
+
+Read more in [docs/security.md](docs/security.md).
+
 ## Requirements
 
 - Python 3.11+
@@ -83,30 +118,9 @@ codex exec --help
 python3 --version
 ```
 
-## 3-minute quickstart
+## Source checkout
 
-Recommended install:
-
-```bash
-curl -fsSL https://conexgram.com/install.sh | bash
-```
-
-Or with pipx:
-
-```bash
-pipx install conexgram
-conexgram setup
-conexgram doctor --fix
-conexgram install-service
-```
-
-Run in the foreground instead of installing a service:
-
-```bash
-conexgram run
-```
-
-Source checkout:
+If you want to run from a source clone:
 
 ```bash
 git clone https://github.com/aanoval/conexgram.git
@@ -115,10 +129,6 @@ python3 -m conexgram setup
 python3 -m conexgram doctor --fix
 python3 -m conexgram run
 ```
-
-Then send `/start` or `/settings` to your Telegram bot.
-
-If the bot says you are unauthorized, it will show your Telegram user ID and chat ID. Add one of those IDs to `~/.conexgram/config.json`.
 
 ## Install from source
 
@@ -215,7 +225,6 @@ Key fields:
 - `progress.typing_indicator`
 - `progress.progress_messages`
 
-Security details: see `docs/security.md`.
 Troubleshooting: see `docs/troubleshooting.md`.
 
 Generate a fresh config:
@@ -225,6 +234,18 @@ python3 -m conexgram example-config
 ```
 
 ## Commands
+
+Common commands first:
+
+- `/new [working_dir]` — start a fresh Codex session
+- `/status` — show the active session
+- `/sessions` — list recent sessions
+- `/workspace [list|switch <path_or_number>|<path>]` — show or set allowed workspace
+- `/settings` — show a friendly settings panel
+- `/tail` — show the latest Codex output for this session
+- `/stop` — stop the running Codex process
+
+Full command set:
 
 - `/new [working_dir]` — start a fresh Codex session
 - `/status` — show the active session

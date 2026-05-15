@@ -2,11 +2,11 @@
 
 ## One-line pitch
 
-Conexgram lets you run Codex CLI from Telegram while everything runs on your own computer.
+Run Codex CLI from Telegram while everything still runs on your own computer.
 
 ## Short description
 
-Run Codex CLI from Telegram. Conexgram keeps sessions persistent, supports safe workspace defaults, and can auto-start on macOS, Linux, or Windows.
+Run Codex CLI from Telegram. Conexgram keeps sessions persistent, uses safe workspace-first defaults, and can auto-start on macOS, Linux, or Windows.
 
 ## GitHub description
 
@@ -29,9 +29,7 @@ It lets you keep Codex running on your own machine and manage sessions from your
 Install:
 
 ```bash
-pipx install conexgram
-conexgram setup
-conexgram install-service
+curl -fsSL https://conexgram.com/install.sh | bash
 ```
 
 Repo: https://github.com/aanoval/conexgram

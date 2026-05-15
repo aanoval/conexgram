@@ -6,7 +6,7 @@ Recommended public install command:
 curl -fsSL https://conexgram.com/install.sh | bash
 ```
 
-The hosted script should serve `public/install.sh`.
+The hosted script should serve `public/install.sh` directly.
 
 ## What it does
 
@@ -16,6 +16,14 @@ The hosted script should serve `public/install.sh`.
 4. Runs the guided setup if config does not exist
 5. Runs `doctor --fix`
 6. Installs and starts the user auto-start service
+
+## Why this path matters
+
+This is the cleanest public install surface for Conexgram:
+
+- short enough to remember
+- obvious from the landing page
+- easy to share in posts, README copy, and demos
 
 ## Before PyPI is live
 

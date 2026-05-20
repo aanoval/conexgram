@@ -8,7 +8,7 @@ from conexgram.session_store import Session
 
 
 class CodexRunnerTests(unittest.TestCase):
-    def test_build_command_includes_model_reasoning_and_full_access(self):
+    def test_build_command_includes_model_reasoning_config_and_full_access(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = CodexConfig(
                 binary="codex",
@@ -32,9 +32,32 @@ class CodexRunnerTests(unittest.TestCase):
 
             self.assertIn("--model", command)
             self.assertIn("gpt-test", command)
-            self.assertIn("--reasoning-effort", command)
-            self.assertIn("high", command)
+            self.assertNotIn("--reasoning-effort", command)
+            self.assertIn("-c", command)
+            self.assertIn('model_reasoning_effort="high"', command)
             self.assertIn("--dangerously-bypass-approvals-and-sandbox", command)
+
+    def test_build_command_omits_reasoning_when_using_codex_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = CodexConfig(
+                binary="codex",
+                default_working_dir=Path(tmp),
+                max_turn_seconds=60,
+            )
+            runner = CodexRunner(config, Path(tmp) / "logs")
+            session = Session(
+                id="s1",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=tmp,
+                reasoning_effort=None,
+            )
+
+            command = runner._build_command(session, Path(tmp) / "final.txt")
+
+            self.assertNotIn("--reasoning-effort", command)
+            self.assertNotIn("model_reasoning_effort", " ".join(command))
 
 
 if __name__ == "__main__":

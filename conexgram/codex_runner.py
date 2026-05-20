@@ -163,7 +163,7 @@ class CodexRunner:
         if session.model:
             command.extend(["--model", session.model])
         if session.reasoning_effort:
-            command.extend(["--reasoning-effort", session.reasoning_effort])
+            command.extend(["-c", f'model_reasoning_effort="{session.reasoning_effort}"'])
         command.extend(["--output-last-message", str(final_message_path)])
         if session.codex_thread_id:
             command.append(session.codex_thread_id)
@@ -180,7 +180,7 @@ class CodexRunner:
             "Runtime preferences:\n"
             f"- Mode: {session.mode}\n"
             f"- Fast mode: {'on' if session.fast_mode else 'off'}\n"
-            f"- Reasoning effort: {session.reasoning_effort}\n"
+            f"- Reasoning effort: {session.reasoning_effort or 'Codex default'}\n"
             "- If fast mode is on, keep responses concise and avoid extra exploration unless needed.\n"
         )
         parts.append(

@@ -174,7 +174,7 @@ class CommandHandler:
             f"- Codex thread: {thread}\n"
             f"- Working directory: {session.working_dir}\n"
             f"- Model: {session.model or 'Codex default'}\n"
-            f"- Reasoning: {session.reasoning_effort}\n"
+            f"- Reasoning: {session.reasoning_effort or 'Codex default'}\n"
             f"- Mode: {session.mode}\n"
             f"- Fast mode: {'on' if session.fast_mode else 'off'}\n"
             f"- Typing indicator: {'on' if self._effective_bool(session.typing_indicator, self.config.progress.typing_indicator) else 'off'}\n"
@@ -246,10 +246,14 @@ class CommandHandler:
     def reasoning(self, chat_id: int, user_id: int, args: list[str]) -> str:
         session = self.ensure_session(chat_id, user_id)
         if not args:
-            return f"Current reasoning effort: {session.reasoning_effort}"
+            return f"Current reasoning effort: {session.reasoning_effort or 'Codex default'}"
         value = args[0].lower()
+        if value in {"default", "none", "off"}:
+            session.reasoning_effort = None
+            self.store.update(session)
+            return "Reasoning effort updated: Codex default"
         if value not in {"low", "medium", "high", "xhigh"}:
-            return "Usage: /reasoning low|medium|high|xhigh"
+            return "Usage: /reasoning default|low|medium|high|xhigh"
         session.reasoning_effort = value
         self.store.update(session)
         return f"Reasoning effort updated: {value}"
@@ -403,7 +407,7 @@ class CommandHandler:
         text = (
             "Settings:\n"
             f"1. Model: {session.model or 'Codex default'}\n"
-            f"2. Reasoning: {session.reasoning_effort}\n"
+            f"2. Reasoning: {session.reasoning_effort or 'Codex default'}\n"
             f"3. Mode: {session.mode}\n"
             f"4. Computer Access: {'on' if self._session_full_access(session) else 'off'}\n"
             f"5. Typing: {'on' if typing else 'off'}\n"
@@ -495,7 +499,7 @@ class CommandHandler:
             f"- Codex thread: {session.codex_thread_id or 'not started yet'}\n"
             f"- Working directory: {session.working_dir}\n"
             f"- Model: {session.model or 'Codex default'}\n"
-            f"- Reasoning: {session.reasoning_effort}\n"
+            f"- Reasoning: {session.reasoning_effort or 'Codex default'}\n"
             f"- Turns: {session.turn_count}\n"
             f"- Last message: {session.last_message_at or 'none'}"
         )

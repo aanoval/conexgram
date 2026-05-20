@@ -24,7 +24,7 @@ class Session:
     user_id: int
     working_dir: str
     model: str | None = None
-    reasoning_effort: str = "medium"
+    reasoning_effort: str | None = None
     mode: str = "safe"
     fast_mode: bool = False
     full_access: bool | None = None
@@ -98,7 +98,7 @@ class SessionStore:
         user_id: int,
         working_dir: Path,
         model: str | None,
-        reasoning_effort: str = "medium",
+        reasoning_effort: str | None = None,
         mode: str = "safe",
         fast_mode: bool = False,
         full_access: bool | None = None,

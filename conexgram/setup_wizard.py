@@ -27,7 +27,7 @@ def run_setup(path: Path = DEFAULT_CONFIG_PATH, force: bool = False) -> Path:
     workspace = _ask("Main workspace folder", str(Path.home() / "ConexgramWorkspace"))
     mode = _choice("Access mode", ["safe", "workspace", "computer"], "workspace")
     model = _ask("Default Codex model, empty for Codex default", "")
-    reasoning = _choice("Reasoning effort", ["low", "medium", "high", "xhigh"], "medium")
+    reasoning = _ask("Default reasoning effort, empty for Codex default", "")
     typing = _yes_no("Show Telegram typing indicator while Codex runs", True)
     progress = _yes_no("Send progress text every minute during long runs", True)
     runtime_computer = False
@@ -45,7 +45,7 @@ def run_setup(path: Path = DEFAULT_CONFIG_PATH, force: bool = False) -> Path:
     base["codex"]["default_working_dir"] = workspace_path
     base["codex"]["workspace_roots"] = [workspace_path]
     base["codex"]["model"] = model
-    base["codex"]["reasoning_effort"] = reasoning
+    base["codex"]["reasoning_effort"] = reasoning.strip().lower()
     base["codex"]["mode"] = "full" if mode == "computer" else mode
     base["codex"]["full_access"] = full_access
     base["codex"]["allow_runtime_full_access"] = runtime_computer

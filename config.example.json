@@ -11,7 +11,7 @@
     "binary": "codex",
     "default_working_dir": "~/ConexgramWorkspace",
     "model": "",
-    "reasoning_effort": "medium",
+    "reasoning_effort": "",
     "mode": "safe",
     "fast_mode": false,
     "full_access": false,
@@ -32,13 +32,11 @@
     "presets": {
       "safe": {
         "mode": "safe",
-        "full_access": false,
-        "reasoning_effort": "medium"
+        "full_access": false
       },
       "work": {
         "mode": "workspace",
-        "full_access": false,
-        "reasoning_effort": "medium"
+        "full_access": false
       },
       "fast": {
         "mode": "safe",

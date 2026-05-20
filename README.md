@@ -218,7 +218,7 @@ Key fields:
 - `codex.additional_writable_dirs`
 - `codex.workspace_roots`
 - `codex.model`
-- `codex.reasoning_effort`
+- `codex.reasoning_effort` (optional; leave empty to use the Codex default)
 - `codex.mode`
 - `codex.full_access`
 - `codex.allow_runtime_full_access`
@@ -255,7 +255,7 @@ Full command set:
 - `/workspace [list|switch <path_or_number>|<path>]` — show or set allowed workspace
 - `/model [name|default]` — show or set model for this session
 - `/models` — list configured model presets
-- `/reasoning low|medium|high|xhigh` — set reasoning effort
+- `/reasoning default|low|medium|high|xhigh` — set reasoning effort, or reset to the Codex default
 - `/mode safe|workspace|full|<preset>` — set execution mode or preset
 - `/preset list|safe|work|fast|power|computer` — apply a common setup
 - `/fast on|off` — toggle fast mode

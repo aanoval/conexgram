@@ -24,7 +24,7 @@ class CodexConfig:
     binary: str = "codex"
     default_working_dir: Path = Path.cwd()
     model: str | None = None
-    reasoning_effort: str = "medium"
+    reasoning_effort: str | None = None
     mode: str = "safe"
     fast_mode: bool = False
     full_access: bool = False
@@ -87,7 +87,7 @@ def example_config_text() -> str:
             "binary": "codex",
             "default_working_dir": str(Path.home() / "ConexgramWorkspace"),
             "model": "",
-            "reasoning_effort": "medium",
+            "reasoning_effort": "",
             "mode": "safe",
             "fast_mode": False,
             "full_access": False,
@@ -102,8 +102,8 @@ def example_config_text() -> str:
                 "power": "gpt-5.2",
             },
             "presets": {
-                "safe": {"mode": "safe", "full_access": False, "reasoning_effort": "medium"},
-                "work": {"mode": "workspace", "full_access": False, "reasoning_effort": "medium"},
+                "safe": {"mode": "safe", "full_access": False},
+                "work": {"mode": "workspace", "full_access": False},
                 "fast": {"mode": "safe", "fast_mode": True, "reasoning_effort": "low"},
                 "power": {"mode": "workspace", "fast_mode": False, "reasoning_effort": "high"},
                 "computer": {"mode": "full", "full_access": True, "reasoning_effort": "high"},
@@ -186,9 +186,9 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         raise ValueError("gateway.session_scope must be 'chat' or 'user'")
 
     model = str(codex_raw.get("model", "")).strip() or None
-    reasoning_effort = str(codex_raw.get("reasoning_effort", "medium")).strip().lower()
-    if reasoning_effort not in {"low", "medium", "high", "xhigh"}:
-        raise ValueError("codex.reasoning_effort must be low, medium, high, or xhigh")
+    reasoning_effort = str(codex_raw.get("reasoning_effort", "")).strip().lower() or None
+    if reasoning_effort is not None and reasoning_effort not in {"low", "medium", "high", "xhigh"}:
+        raise ValueError("codex.reasoning_effort must be empty, low, medium, high, or xhigh")
 
     mode = str(codex_raw.get("mode", "safe")).strip().lower()
     if mode not in {"safe", "workspace", "full"}:

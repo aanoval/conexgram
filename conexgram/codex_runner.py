@@ -171,11 +171,13 @@ class CodexRunner:
         return command
 
     def _build_prompt(self, session: Session, user_text: str) -> str:
+        tool_prompt = self._gateway_tool_prompt()
         if session.codex_thread_id:
-            return user_text.strip() + "\n"
+            return f"{tool_prompt}\n\nUser message:\n{user_text.strip()}\n"
         parts = []
         if self.config.base_prompt:
             parts.append(self.config.base_prompt)
+        parts.append(tool_prompt)
         parts.append(
             "Runtime preferences:\n"
             f"- Mode: {session.mode}\n"
@@ -192,6 +194,18 @@ class CodexRunner:
         )
         parts.append("User message:\n" + user_text.strip())
         return "\n\n".join(parts) + "\n"
+
+    @staticmethod
+    def _gateway_tool_prompt() -> str:
+        return (
+            "Conexgram gateway tool protocol:\n"
+            "- If the user asks you to send, attach, upload, or deliver a local file to Telegram, "
+            "create or locate the file, then include these directive lines in your final answer:\n"
+            "  CONEXGRAM_SEND_FILE: /absolute/path/to/file\n"
+            "  CONEXGRAM_SEND_FILE_CAPTION: optional caption\n"
+            "- The gateway will validate the path and send the file as a Telegram attachment.\n"
+            "- Do not say you cannot attach files just because Codex CLI lacks a native upload tool."
+        )
 
     def _should_use_full_access(self, session: Session) -> bool:
         if session.mode == "full":

@@ -59,6 +59,23 @@ class CodexRunnerTests(unittest.TestCase):
             self.assertNotIn("--reasoning-effort", command)
             self.assertNotIn("model_reasoning_effort", " ".join(command))
 
+    def test_resume_prompt_includes_gateway_file_protocol(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = CodexRunner(CodexConfig(binary="codex", default_working_dir=Path(tmp)), Path(tmp) / "logs")
+            session = Session(
+                id="s1",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=tmp,
+                codex_thread_id="thread-1",
+            )
+
+            prompt = runner._build_prompt(session, "send this file")
+
+            self.assertIn("CONEXGRAM_SEND_FILE:", prompt)
+            self.assertIn("User message:\nsend this file", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

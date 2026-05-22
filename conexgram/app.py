@@ -26,6 +26,12 @@ class WorkItem:
     message: TelegramMessage
 
 
+@dataclass(frozen=True)
+class AttachmentDirective:
+    path_text: str
+    caption: str | None = None
+
+
 class GatewayApp:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
@@ -153,10 +159,26 @@ class GatewayApp:
             session.title = self._title_from_text(message.text)
         self.store.update(session)
 
+        response_text, attachment_directives = self._extract_attachment_directives(result.text)
+
         prefix = ""
         if result.return_code != 0:
             prefix = f"Codex exited with code {result.return_code}.\n\n"
-        self._send(message.chat_id, prefix + result.text)
+        text_to_send = (prefix + response_text).strip()
+        if text_to_send:
+            self._send(message.chat_id, text_to_send)
+
+        for directive in attachment_directives:
+            attachment = self._prepare_attachment(directive, session)
+            if isinstance(attachment, str):
+                self._send(message.chat_id, attachment, message.message_id)
+                continue
+            self._send_file(
+                message.chat_id,
+                attachment.path,
+                attachment.caption,
+                reply_to_message_id=message.message_id,
+            )
 
     def _handle_upload(self, message: TelegramMessage) -> None:
         session = self.commands.ensure_session(message.chat_id, message.user_id)
@@ -211,6 +233,59 @@ class GatewayApp:
         except TelegramApiError as exc:
             LOG.warning("Failed to send Telegram file: %s", exc)
             self._send(chat_id, f"Failed to send file: {exc}", reply_to_message_id)
+
+    @staticmethod
+    def _extract_attachment_directives(text: str) -> tuple[str, list[AttachmentDirective]]:
+        clean_lines: list[str] = []
+        directives: list[AttachmentDirective] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("CONEXGRAM_SEND_FILE:"):
+                path_text = stripped.split(":", 1)[1].strip().strip("\"'")
+                if path_text:
+                    directives.append(AttachmentDirective(path_text=path_text))
+                continue
+            if stripped.startswith("CONEXGRAM_SEND_FILE_CAPTION:"):
+                caption = stripped.split(":", 1)[1].strip()
+                if directives:
+                    previous = directives[-1]
+                    directives[-1] = AttachmentDirective(
+                        path_text=previous.path_text,
+                        caption=caption or None,
+                    )
+                continue
+            clean_lines.append(line)
+        return "\n".join(clean_lines).strip(), directives
+
+    def _prepare_attachment(
+        self,
+        directive: AttachmentDirective,
+        session,
+    ) -> FileCommandResponse | str:
+        raw_path = Path(directive.path_text).expanduser()
+        if raw_path.is_absolute():
+            requested = raw_path.resolve()
+        else:
+            requested = (Path(session.working_dir) / raw_path).resolve()
+        if not requested.exists():
+            return f"Attachment file not found: {requested}"
+        if not requested.is_file():
+            return f"Attachment path is not a file: {requested}"
+        if not self.commands._path_allowed(requested):
+            return f"Attachment file is outside configured workspace roots: {requested}"
+
+        size = requested.stat().st_size
+        max_bytes = self.config.gateway.max_upload_bytes
+        if size > max_bytes:
+            return (
+                f"Attachment file too large: {CommandHandler._format_bytes(size)}. "
+                f"Limit: {CommandHandler._format_bytes(max_bytes)}."
+            )
+
+        caption = directive.caption
+        if caption and len(caption) > 1024:
+            caption = caption[:1021] + "..."
+        return FileCommandResponse(path=requested, caption=caption)
 
     @staticmethod
     def _title_from_text(text: str) -> str:

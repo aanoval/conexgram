@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from .config import AppConfig
 from .session_store import Session, SessionStore
@@ -131,6 +135,8 @@ class CommandHandler:
             return self.version_text()
         if command == "/config":
             return self.config_text()
+        if command in {"/quota", "/codexstatus"}:
+            return self.codex_usage()
         if command == "/codex":
             return self.codex_cli(args)
         if command == "/sendfile":
@@ -581,6 +587,9 @@ class CommandHandler:
         )
 
     def codex_cli(self, args: list[str]) -> str:
+        if args and args[0].lower() == "status":
+            return self.codex_usage()
+
         command = [self.config.codex.binary] + (args or ["--help"])
         try:
             result = subprocess.run(
@@ -610,6 +619,120 @@ class CommandHandler:
         if len(output) > limit:
             output = output[:limit].rstrip() + "\n\n... output truncated ..."
         return output
+
+    def codex_usage(self) -> str:
+        auth_path = Path.home() / ".codex" / "auth.json"
+        if not auth_path.exists():
+            return "Codex auth not found. Run `/codex login` first."
+        try:
+            auth = json.loads(auth_path.read_text(encoding="utf-8"))
+            token = auth["tokens"]["access_token"]
+        except Exception as exc:
+            return f"Could not read Codex auth token: {exc}"
+
+        request = Request(
+            "https://chatgpt.com/backend-api/wham/usage",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=20) as response:
+                usage = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            if exc.code in {401, 403}:
+                return "Codex usage request was unauthorized. Run `/codex login` again, then retry `/quota`."
+            return f"Codex usage request failed: HTTP {exc.code}"
+        except Exception as exc:
+            return f"Codex usage request failed: {exc}"
+
+        return self._format_codex_usage(usage)
+
+    def _format_codex_usage(self, usage: dict) -> str:
+        lines = ["Codex usage:"]
+        plan_type = usage.get("plan_type")
+        if plan_type:
+            lines.append(f"- Plan: {plan_type}")
+
+        rate_limit = usage.get("rate_limit") or {}
+        lines.extend(self._format_rate_limit("Main", rate_limit))
+
+        for item in usage.get("additional_rate_limits") or []:
+            name = item.get("limit_name") or item.get("metered_feature") or "Additional"
+            lines.extend(self._format_rate_limit(str(name), item.get("rate_limit") or {}))
+
+        credits = usage.get("credits") or {}
+        if credits:
+            balance = credits.get("balance")
+            unlimited = credits.get("unlimited")
+            has_credits = credits.get("has_credits")
+            credit_bits = []
+            if balance is not None:
+                credit_bits.append(f"balance {balance}")
+            if unlimited:
+                credit_bits.append("unlimited")
+            elif has_credits is not None:
+                credit_bits.append("has credits" if has_credits else "no credits")
+            if credit_bits:
+                lines.append(f"- Credits: {', '.join(credit_bits)}")
+
+        reached_type = usage.get("rate_limit_reached_type")
+        if reached_type:
+            lines.append(f"- Limit reached type: {reached_type}")
+        lines.append("- Details: https://chatgpt.com/codex/settings/usage")
+        return "\n".join(lines)
+
+    def _format_rate_limit(self, label: str, rate_limit: dict) -> list[str]:
+        if not rate_limit:
+            return [f"- {label}: unavailable"]
+        allowed = rate_limit.get("allowed")
+        reached = rate_limit.get("limit_reached")
+        status = "allowed" if allowed else "limited"
+        if reached:
+            status = "limit reached"
+
+        primary = self._format_window(rate_limit.get("primary_window"), "5h")
+        secondary = self._format_window(rate_limit.get("secondary_window"), "weekly")
+        return [f"- {label}: {status}", f"  - {primary}", f"  - {secondary}"]
+
+    def _format_window(self, window: dict | None, fallback_label: str) -> str:
+        if not window:
+            return f"{fallback_label}: unavailable"
+        seconds = int(window.get("limit_window_seconds") or 0)
+        label = self._window_label(seconds, fallback_label)
+        used = window.get("used_percent")
+        reset_after = window.get("reset_after_seconds")
+        reset_at = window.get("reset_at")
+        parts = [f"{label}: {used}% used" if used is not None else f"{label}: usage unavailable"]
+        if reset_after is not None:
+            parts.append(f"resets in {self._format_duration(int(reset_after))}")
+        elif reset_at is not None:
+            dt = datetime.fromtimestamp(int(reset_at), tz=timezone.utc).astimezone()
+            parts.append(f"resets at {dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        return ", ".join(parts)
+
+    @staticmethod
+    def _window_label(seconds: int, fallback: str) -> str:
+        if 17_000 <= seconds <= 19_000:
+            return "5h"
+        if 600_000 <= seconds <= 610_000:
+            return "weekly"
+        return fallback
+
+    @staticmethod
+    def _format_duration(seconds: int) -> str:
+        days, seconds = divmod(max(0, seconds), 86_400)
+        hours, seconds = divmod(seconds, 3_600)
+        minutes, _ = divmod(seconds, 60)
+        chunks = []
+        if days:
+            chunks.append(f"{days}d")
+        if hours:
+            chunks.append(f"{hours}h")
+        if minutes or not chunks:
+            chunks.append(f"{minutes}m")
+        return " ".join(chunks)
 
     def sendfile(self, args: list[str]) -> str | FileCommandResponse:
         if not args:
@@ -667,6 +790,8 @@ class CommandHandler:
             "/doctor - run setup checks\n"
             "/version - show local versions\n"
             "/config - show gateway config summary\n"
+            "/quota - show Codex usage and rate-limit status\n"
+            "/codexstatus - alias for /quota\n"
             "/codex <args> - run a native Codex CLI command\n"
             "/sendfile <path> [caption] - send a local file to Telegram\n"
             "/stop - stop the currently running Codex process\n"

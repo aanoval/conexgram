@@ -106,6 +106,39 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIsInstance(response, str)
             self.assertIn("ARGS=['debug', 'two words']", response)
 
+    def test_format_codex_usage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            response = handler._format_codex_usage(
+                {
+                    "plan_type": "prolite",
+                    "rate_limit": {
+                        "allowed": True,
+                        "limit_reached": False,
+                        "primary_window": {
+                            "used_percent": 16,
+                            "limit_window_seconds": 18000,
+                            "reset_after_seconds": 3600,
+                        },
+                        "secondary_window": {
+                            "used_percent": 92,
+                            "limit_window_seconds": 604800,
+                            "reset_after_seconds": 86400,
+                        },
+                    },
+                    "credits": {
+                        "has_credits": False,
+                        "unlimited": False,
+                        "balance": "0",
+                    },
+                }
+            )
+
+            self.assertIn("Plan: prolite", response)
+            self.assertIn("5h: 16% used", response)
+            self.assertIn("weekly: 92% used", response)
+            self.assertIn("Credits: balance 0, no credits", response)
+
 
 if __name__ == "__main__":
     unittest.main()

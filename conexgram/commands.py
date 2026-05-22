@@ -140,7 +140,7 @@ class CommandHandler:
         if command == "/codex":
             return self.codex_cli(args)
         if command == "/sendfile":
-            return self.sendfile(args)
+            return self.sendfile(chat_id, user_id, args)
         if command == "/stop":
             return "__STOP_CODEX__"
         return "Unknown command. Send /help for available commands."
@@ -734,10 +734,15 @@ class CommandHandler:
             chunks.append(f"{minutes}m")
         return " ".join(chunks)
 
-    def sendfile(self, args: list[str]) -> str | FileCommandResponse:
+    def sendfile(self, chat_id: int, user_id: int, args: list[str]) -> str | FileCommandResponse:
         if not args:
             return "Usage: /sendfile <path> [caption]"
-        requested = Path(args[0]).expanduser().resolve()
+        raw_path = Path(args[0]).expanduser()
+        if raw_path.is_absolute():
+            requested = raw_path.resolve()
+        else:
+            session = self.ensure_session(chat_id, user_id)
+            requested = (Path(session.working_dir) / raw_path).resolve()
         if not requested.exists():
             return f"File not found: {requested}"
         if not requested.is_file():

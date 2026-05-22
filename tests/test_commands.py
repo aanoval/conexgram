@@ -37,6 +37,22 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertEqual(response.path, path.resolve())
             self.assertEqual(response.caption, "sample caption")
 
+    def test_sendfile_resolves_relative_path_from_session_working_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "project"
+            work.mkdir()
+            path = work / "artifact.txt"
+            path.write_text("hello", encoding="utf-8")
+            handler = make_handler(tmp)
+            handler.ensure_session(1, 2).working_dir = str(work)
+
+            response = handler.handle_command("/sendfile artifact.txt", 1, 2)
+
+            self.assertIsInstance(response, FileCommandResponse)
+            assert isinstance(response, FileCommandResponse)
+            self.assertEqual(response.path, path.resolve())
+
     def test_sendfile_rejects_large_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "large.bin"

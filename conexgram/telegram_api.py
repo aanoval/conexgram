@@ -229,6 +229,8 @@ class TelegramClient:
             raise TelegramApiError(f"Telegram HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
             raise TelegramApiError(f"Telegram network error: {exc}") from exc
+        except TimeoutError as exc:
+            raise TelegramApiError(f"Telegram network timeout: {exc}") from exc
 
         if not parsed.get("ok"):
             raise TelegramApiError(f"Telegram API error: {parsed}")

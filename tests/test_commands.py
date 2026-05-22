@@ -79,6 +79,33 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIn("Settings:", response.text)
             self.assertIsNotNone(response.reply_markup)
 
+    def test_codex_command_runs_native_binary_without_shell(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "fake-codex"
+            script.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "print('ARGS=' + repr(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+            handler = make_handler(tmp)
+            handler.config = AppConfig(
+                telegram=handler.config.telegram,
+                codex=CodexConfig(
+                    binary=str(script),
+                    default_working_dir=Path(tmp),
+                    allow_runtime_full_access=True,
+                ),
+                gateway=handler.config.gateway,
+                config_path=handler.config.config_path,
+            )
+
+            response = handler.handle_command('/codex debug "two words"', 1, 2)
+
+            self.assertIsInstance(response, str)
+            self.assertIn("ARGS=['debug', 'two words']", response)
+
 
 if __name__ == "__main__":
     unittest.main()

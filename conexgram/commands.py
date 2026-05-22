@@ -131,6 +131,8 @@ class CommandHandler:
             return self.version_text()
         if command == "/config":
             return self.config_text()
+        if command == "/codex":
+            return self.codex_cli(args)
         if command == "/sendfile":
             return self.sendfile(args)
         if command == "/stop":
@@ -578,6 +580,37 @@ class CommandHandler:
             f"- Default cwd: {self.config.codex.default_working_dir}"
         )
 
+    def codex_cli(self, args: list[str]) -> str:
+        command = [self.config.codex.binary] + (args or ["--help"])
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=str(self.config.codex.default_working_dir),
+            )
+        except subprocess.TimeoutExpired:
+            return "Codex command timed out after 120 seconds."
+        except Exception as exc:
+            return f"Codex command failed to start: {exc}"
+
+        output = "\n".join(
+            item.strip()
+            for item in (result.stdout, result.stderr)
+            if item and item.strip()
+        ).strip()
+        if not output:
+            output = "(no output)"
+        if result.returncode != 0:
+            output = f"Codex exited with code {result.returncode}.\n\n{output}"
+
+        limit = max(1000, self.config.gateway.max_telegram_message_chars - 500)
+        if len(output) > limit:
+            output = output[:limit].rstrip() + "\n\n... output truncated ..."
+        return output
+
     def sendfile(self, args: list[str]) -> str | FileCommandResponse:
         if not args:
             return "Usage: /sendfile <path> [caption]"
@@ -613,7 +646,7 @@ class CommandHandler:
             "/cwd [path] - show or set cwd before Codex thread starts\n"
             "/model [name|default] - show or set model for this session\n"
             "/models - list configured model presets\n"
-            "/reasoning low|medium|high|xhigh - set reasoning effort\n"
+            "/reasoning default|low|medium|high|xhigh - set reasoning effort\n"
             "/mode safe|workspace|full|<preset> - set execution mode\n"
             "/preset list|safe|work|fast|power|computer - apply a common setup\n"
             "/fast on|off - toggle fast mode\n"
@@ -634,6 +667,7 @@ class CommandHandler:
             "/doctor - run setup checks\n"
             "/version - show local versions\n"
             "/config - show gateway config summary\n"
+            "/codex <args> - run a native Codex CLI command\n"
             "/sendfile <path> [caption] - send a local file to Telegram\n"
             "/stop - stop the currently running Codex process\n"
             "/help - show this help\n\n"

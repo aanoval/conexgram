@@ -274,6 +274,7 @@ Full command set:
 - `/doctor` — run setup checks from Telegram
 - `/version` — show Conexgram, Python, and Codex details
 - `/config` — show config summary
+- `/codex <args>` — run a native Codex CLI command, for example `/codex --version`
 - `/sendfile <path> [caption]` — send a local file to Telegram
 - `/stop` — stop the running Codex process
 - `/help` — show help

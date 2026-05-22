@@ -44,7 +44,7 @@ class GatewayConfig:
     session_scope: str = "chat"
     send_ack: bool = True
     max_telegram_message_chars: int = 3900
-    max_upload_bytes: int = 20 * 1024 * 1024
+    max_upload_bytes: int = 50 * 1024 * 1024
     worker_count: int = 1
     max_log_days: int = 14
     max_log_mb: int = 100
@@ -120,7 +120,7 @@ def example_config_text() -> str:
             "session_scope": "chat",
             "send_ack": True,
             "max_telegram_message_chars": 3900,
-            "max_upload_bytes": 20971520,
+            "max_upload_bytes": 52428800,
             "worker_count": 1,
             "max_log_days": 14,
             "max_log_mb": 100,
@@ -232,7 +232,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
             session_scope=session_scope,
             send_ack=bool(gateway_raw.get("send_ack", True)),
             max_telegram_message_chars=int(gateway_raw.get("max_telegram_message_chars", 3900)),
-            max_upload_bytes=int(gateway_raw.get("max_upload_bytes", 20 * 1024 * 1024)),
+            max_upload_bytes=int(gateway_raw.get("max_upload_bytes", 50 * 1024 * 1024)),
             worker_count=max(1, int(gateway_raw.get("worker_count", 1))),
             max_log_days=max(1, int(gateway_raw.get("max_log_days", 14))),
             max_log_mb=max(10, int(gateway_raw.get("max_log_mb", 100))),

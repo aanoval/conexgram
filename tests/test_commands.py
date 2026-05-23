@@ -199,6 +199,22 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIsNone(handler._extract_device_code("Welcome to Conexgram CLI"))
             self.assertIsNone(handler._extract_device_code("WELCOME"))
 
+    def test_extract_device_code_with_ansi_and_dash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            self.assertEqual(
+                handler._extract_device_code(
+                    "\x1b[90m   WNQ3-7KX1  \x1b[0m"
+                ),
+                "WNQ3-7KX1",
+            )
+            self.assertEqual(
+                handler._extract_device_code(
+                    "Open this URL:\n\x1b[94mhttps://auth.openai.com/codex/device\x1b[0m"
+                ),
+                None,
+            )
+
     def test_codexlogin_rejects_non_owner(self):
         with tempfile.TemporaryDirectory() as tmp:
             handler = make_handler(tmp)

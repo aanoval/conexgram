@@ -44,6 +44,8 @@ class ProfileCommandResponse:
 
 
 class CommandHandler:
+    _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
     def __init__(self, config: AppConfig, store: SessionStore) -> None:
         self.config = config
         self.store = store
@@ -1179,10 +1181,12 @@ class CommandHandler:
 
     @staticmethod
     def _extract_device_code(line: str) -> Optional[str]:
+        line = CommandHandler._ANSI_ESCAPE_RE.sub("", line).strip()
         phrase_patterns = [
-            re.compile(r"code[:\s]+([A-Za-z0-9-]{6,12})", re.IGNORECASE),
-            re.compile(r"verification code[:\s]+([A-Za-z0-9-]{6,12})", re.IGNORECASE),
-            re.compile(r"device code[:\s]+([A-Za-z0-9-]{6,12})", re.IGNORECASE),
+            re.compile(r"one[-\s]?time code[:\s]+([A-Za-z0-9-]{6,16})", re.IGNORECASE),
+            re.compile(r"verification code[:\s]+([A-Za-z0-9-]{6,16})", re.IGNORECASE),
+            re.compile(r"device code[:\s]+([A-Za-z0-9-]{6,16})", re.IGNORECASE),
+            re.compile(r"\bcode[:\s]+([A-Za-z0-9-]{6,16})", re.IGNORECASE),
         ]
         for pattern in phrase_patterns:
             match = pattern.search(line)
@@ -1192,7 +1196,7 @@ class CommandHandler:
                     return candidate
         # Last-resort fallback: sometimes the CLI prints only the code on a single line.
         # Require at least one digit to avoid false positives like "WELCOME".
-        fallback = re.findall(r"\b(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{6,12}\b", line)
+        fallback = re.findall(r"(?=[A-Za-z0-9-]*[0-9])[A-Za-z0-9-]{6,16}\b", line)
         for token in fallback:
             token = token.upper()
             if len(token) >= 6 and token != "WELCOME":

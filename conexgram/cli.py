@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from .app import GatewayApp, configure_logging
 from .config import DEFAULT_CONFIG_PATH, example_config_text, init_config, load_config
+from .onboarding import OnboardingError, run_first_run_onboarding
 from .paths import ensure_dir, expand_path
 from .service import install_service, uninstall_service
 from .setup_wizard import run_setup
@@ -74,16 +75,35 @@ def main(argv: Optional[List[str]] = None) -> int:
     if command in {"doctor", "install-service"} and bool(getattr(args, "fix", False)):
         _doctor_fix_dirs(config_path)
 
-    try:
-        config = load_config(config_path)
-    except Exception as exc:
-        print(f"Config error: {exc}", file=sys.stderr)
-        if command == "doctor":
-            print()
-            print("Fix:")
-            print(f"  python3 -m conexgram --config {config_path} setup --force")
-            print("  Then edit the generated config if needed and rerun doctor.")
-        return 1
+    if command == "run":
+        config_loaded = False
+        attempted_onboarding = False
+        while not config_loaded:
+            try:
+                config = load_config(config_path)
+                config_loaded = True
+            except Exception as exc:
+                if attempted_onboarding or not _is_first_run_config_error(exc):
+                    print(f"Config error: {exc}", file=sys.stderr)
+                    return 1
+                try:
+                    run_first_run_onboarding(config_path)
+                except OnboardingError as onboarding_exc:
+                    print(f"Onboarding error: {onboarding_exc}", file=sys.stderr)
+                    return 1
+                attempted_onboarding = True
+
+    else:
+        try:
+            config = load_config(config_path)
+        except Exception as exc:
+            print(f"Config error: {exc}", file=sys.stderr)
+            if command == "doctor":
+                print()
+                print("Fix:")
+                print(f"  python3 -m conexgram --config {config_path} setup --force")
+                print("  Then edit the generated config if needed and rerun doctor.")
+            return 1
 
     if command == "doctor":
         print("Config OK")
@@ -138,3 +158,14 @@ def _doctor_fix_dirs(config_path: Path) -> None:
         ensure_dir(expand_path(default_working_dir))
     for item in codex.get("workspace_roots", []):
         ensure_dir(expand_path(item))
+
+
+def _is_first_run_config_error(exc: Exception) -> bool:
+    if isinstance(exc, FileNotFoundError):
+        return True
+
+    message = str(exc)
+    return message in {
+        "telegram.bot_token is not configured",
+        "Configure telegram.allowed_user_ids or telegram.allowed_chat_ids",
+    }

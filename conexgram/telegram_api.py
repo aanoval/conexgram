@@ -48,6 +48,12 @@ class TelegramClient:
         result = self._request("getUpdates", payload, timeout=self.timeout_seconds + 10)
         return list(result)
 
+    def get_me(self) -> dict[str, Any]:
+        result = self._request("getMe", {}, timeout=15)
+        if not isinstance(result, dict):
+            raise TelegramApiError("Telegram API getMe returned unexpected payload")
+        return result
+
     def send_message(
         self,
         chat_id: int,

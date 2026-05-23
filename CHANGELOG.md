@@ -4,6 +4,13 @@ All notable changes to Conexgram will be documented in this file.
 
 The format follows a simple versioned changelog, and this project uses semantic versioning before `1.0.0` with alpha releases for early public testing.
 
+## 0.1.1
+
+- Multi-profile Codex auth switching and profile management
+- Native command passthrough support via `/codex <args>` improvements
+- Telegram attachment handling and higher file upload limit (50MB)
+- PyPI publication reliability updates
+
 ## 0.1.0-alpha
 
 Initial public alpha.

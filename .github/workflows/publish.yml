@@ -13,6 +13,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: pypi
+    env:
+      HAS_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,12 +29,12 @@ jobs:
         continue-on-error: true
         uses: pypa/gh-action-pypi-publish@release/v1
       - name: Publish package (token fallback)
-        if: steps.publish-oidc.outcome == 'failure' && secrets.PYPI_API_TOKEN != ''
+        if: steps.publish-oidc.outcome == 'failure' && env.HAS_PYPI_TOKEN == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
       - name: Fail publish without credentials
-        if: steps.publish-oidc.outcome == 'failure' && secrets.PYPI_API_TOKEN == ''
+        if: steps.publish-oidc.outcome == 'failure' && env.HAS_PYPI_TOKEN == 'false'
         run: |
           echo "Publish failed using OIDC and PYPI_API_TOKEN is not configured."
           echo "Configure PyPI trusted publisher or add PYPI_API_TOKEN secret."

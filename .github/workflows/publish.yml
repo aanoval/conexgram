@@ -22,5 +22,18 @@ jobs:
         run: python -m pip install build && python -m build
       - name: Check package
         run: python -m pip install twine && twine check dist/*
-      - name: Publish package
+      - name: Publish package (OIDC)
+        id: publish-oidc
+        continue-on-error: true
         uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Publish package (token fallback)
+        if: steps.publish-oidc.outcome == 'failure' && secrets.PYPI_API_TOKEN != ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Fail publish without credentials
+        if: steps.publish-oidc.outcome == 'failure' && secrets.PYPI_API_TOKEN == ''
+        run: |
+          echo "Publish failed using OIDC and PYPI_API_TOKEN is not configured."
+          echo "Configure PyPI trusted publisher or add PYPI_API_TOKEN secret."
+          exit 1

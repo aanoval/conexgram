@@ -1228,20 +1228,44 @@ class CommandHandler:
                     env=env,
                     cwd=str(profile_home),
                 )
-                with process:
-                    assert process.stdout is not None
-                    for raw in process.stdout:
-                        code = self._extract_device_code(raw)
-                        if code and not emitted_code:
-                            emitted_code = True
-                            self._notify(
-                                chat_id,
-                                (
-                                    "Codex device auth code (send this to the link shown in your browser):\n"
-                                    f"{code}"
-                                ),
-                            )
-                    return_code = process.wait()
+
+                timeout_state = {"fired": False}
+
+                def _force_kill() -> None:
+                    if process.poll() is None:
+                        timeout_state["fired"] = True
+                        process.terminate()
+                        def _kill_if_still_running() -> None:
+                            if process.poll() is None:
+                                process.kill()
+                        threading.Timer(2, _kill_if_still_running).start()
+
+                timeout_timer = threading.Timer(5 * 60, _force_kill)
+                timeout_timer.start()
+                try:
+                    with process:
+                        assert process.stdout is not None
+                        for raw in process.stdout:
+                            code = self._extract_device_code(raw)
+                            if code and not emitted_code:
+                                emitted_code = True
+                                self._notify(
+                                    chat_id,
+                                    (
+                                        "Codex device auth code (send this to the link shown in your browser):\n"
+                                        f"{code}"
+                                    ),
+                                )
+                        return_code = process.wait()
+                finally:
+                    timeout_timer.cancel()
+
+                if timeout_state["fired"]:
+                    self._notify(
+                        chat_id,
+                        "Codex device login timed out after 5 minutes and was cancelled.",
+                    )
+                    return
 
                 auth_path = profile_home / ".codex" / "auth.json"
                 if return_code != 0:

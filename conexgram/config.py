@@ -98,7 +98,7 @@ def example_config_text() -> str:
             "workspace_roots": [str(Path.home() / "ConexgramWorkspace")],
             "model_presets": {
                 "default": "",
-                "fast": "gpt-5.4-mini",
+                "fast": "gpt-5.3-codex-spark",
                 "power": "gpt-5.2",
             },
             "presets": {

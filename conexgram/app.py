@@ -143,6 +143,14 @@ class GatewayApp:
             self._send(message.chat_id, command_response, message.message_id)
             return
 
+        if not self.commands.active_profile_has_auth(message.chat_id, message.user_id):
+            self._send(
+                message.chat_id,
+                self.commands.codex_not_ready_message(message.chat_id, message.user_id),
+                message.message_id,
+            )
+            return
+
         self.queue.put(WorkItem(message=message))
         if self.config.gateway.send_ack:
             session = self.commands.ensure_session(message.chat_id, message.user_id)

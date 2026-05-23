@@ -146,10 +146,35 @@ class CommandHandlerTests(unittest.TestCase):
                 config_path=handler.config.config_path,
             )
 
+            make_fake_auth(Path(tmp), "dev@example.com", "Dev")
+            profile = handler.store.register_profile_from_home(Path(tmp))
+            handler.store.set_active_profile(
+                scope_key=handler.scope_key(1, 2), profile_id=profile.id
+            )
+
             response = handler.handle_command('/codex debug "two words"', 1, 2)
 
             self.assertIsInstance(response, str)
             self.assertIn("ARGS=['debug', 'two words']", response)
+
+    def test_codex_command_prompts_when_auth_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            missing_home = Path(tmp) / "missing-profile"
+            missing_home.mkdir()
+            missing_profile = handler.store.register_profile(
+                email="missing-local@example.com",
+                home_dir=missing_home,
+                display_name="Missing Profile",
+            )
+            handler.store.set_active_profile(
+                scope_key=handler.scope_key(1, 2), profile_id=missing_profile.id
+            )
+
+            response = handler.handle_command('/codex debug "two words"', 1, 2)
+
+            self.assertIn("Codex auth not found", response)
+            self.assertIn("/codexlogin", response)
 
     def test_format_codex_usage(self):
         with tempfile.TemporaryDirectory() as tmp:

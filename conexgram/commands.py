@@ -186,6 +186,41 @@ class CommandHandler:
     def _profile_label(self, profile) -> str:
         return f"{profile.display_name} <{profile.email}> [{profile.id}]"
 
+    def _active_profile_has_auth(self, chat_id: int, user_id: int) -> bool:
+        profile = self.active_profile(chat_id, user_id)
+        auth_path = Path(profile.home_dir) / ".codex" / "auth.json"
+        if not auth_path.exists():
+            return False
+        try:
+            auth = json.loads(auth_path.read_text(encoding="utf-8"))
+            tokens = auth.get("tokens") if isinstance(auth, dict) else None
+            if not isinstance(tokens, dict):
+                return False
+            access_token = tokens.get("access_token")
+            return isinstance(access_token, str) and bool(access_token.strip())
+        except Exception:
+            return False
+
+    def active_profile_has_auth(self, chat_id: int, user_id: int) -> bool:
+        return self._active_profile_has_auth(chat_id, user_id)
+
+    def _missing_auth_hint(self) -> str:
+        return (
+            "Codex auth not found. Run `codex login` in your global Codex CLI first, "
+            "or use `/codexlogin` here to authenticate this bot profile."
+        )
+
+    def _codex_not_ready_message(self, chat_id: int, user_id: int) -> str:
+        profile = self.active_profile(chat_id, user_id)
+        return (
+            f"Active profile: {self._profile_label(profile)}\n"
+            f"Profile home: {profile.home_dir}\n"
+            f"{self._missing_auth_hint()}"
+        )
+
+    def codex_not_ready_message(self, chat_id: int, user_id: int) -> str:
+        return self._codex_not_ready_message(chat_id, user_id)
+
     def handle_command(
         self,
         text: str,
@@ -272,6 +307,8 @@ class CommandHandler:
         if command in {"/quota", "/codexstatus"}:
             return self.codex_usage(chat_id, user_id)
         if command == "/codex":
+            if not self._active_profile_has_auth(chat_id, user_id):
+                return self._codex_not_ready_message(chat_id, user_id)
             return self.codex_cli(chat_id, user_id, args)
         if command == "/codexlogin":
             return self.codex_device_login(chat_id, user_id)
@@ -941,6 +978,9 @@ class CommandHandler:
         )
 
     def codex_cli(self, chat_id: int, user_id: int, args: list[str]) -> str:
+        if not self._active_profile_has_auth(chat_id, user_id):
+            return self._codex_not_ready_message(chat_id, user_id)
+
         if args and args[0].lower() == "status":
             return self.codex_usage(chat_id, user_id)
 
@@ -982,7 +1022,7 @@ class CommandHandler:
         profile = self.store.active_profile(scope_key=scope_key)
         auth_path = Path(profile.home_dir) / ".codex" / "auth.json"
         if not auth_path.exists():
-            return "Codex auth not found. Run `/codex login` first."
+            return self._missing_auth_hint()
         try:
             auth = json.loads(auth_path.read_text(encoding="utf-8"))
             token = auth["tokens"]["access_token"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -12,10 +13,10 @@ class AgentProfile:
 
     name: str
     description: str = ""
-    working_dir: Path | None = None
-    model: str | None = None
-    reasoning_effort: str | None = None
-    mode: str | None = None
+    working_dir: Optional[Path] = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
+    mode: Optional[str] = None
     base_prompt: str = ""
 
 
@@ -29,5 +30,5 @@ class AgentRegistry:
     def register(self, profile: AgentProfile) -> None:
         self.profiles[profile.name] = profile
 
-    def get(self, name: str | None = None) -> AgentProfile | None:
+    def get(self, name: Optional[str] = None) -> Optional[AgentProfile]:
         return self.profiles.get(name or self.default_name)

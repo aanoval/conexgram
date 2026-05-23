@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Optional, Union
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -22,20 +23,20 @@ from .session_store import Session, SessionStore
 @dataclass(frozen=True)
 class FileCommandResponse:
     path: Path
-    caption: str | None = None
+    caption: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class MessageCommandResponse:
     text: str
-    reply_markup: dict | None = None
+    reply_markup: Optional[dict] = None
 
 
 @dataclass(frozen=True)
 class ProfileCommandResponse:
     text: str
     stop_session_ids: list[str]
-    reply_markup: dict | None = None
+    reply_markup: Optional[dict] = None
 
 
 class CommandHandler:
@@ -87,7 +88,7 @@ class CommandHandler:
         text: str,
         chat_id: int,
         user_id: int,
-    ) -> str | FileCommandResponse | MessageCommandResponse | ProfileCommandResponse | None:
+    ) -> Optional[Union[str, FileCommandResponse, MessageCommandResponse, ProfileCommandResponse]]:
         if not text.startswith("/"):
             return None
         try:
@@ -197,7 +198,12 @@ class CommandHandler:
             "Context is fresh. Send a normal message to start a new Codex thread."
         )
 
-    def profile(self, chat_id: int, user_id: int, args: list[str]) -> str | MessageCommandResponse | ProfileCommandResponse:
+    def profile(
+        self,
+        chat_id: int,
+        user_id: int,
+        args: list[str],
+    ) -> Union[str, MessageCommandResponse, ProfileCommandResponse]:
         if not args:
             return self.profile_status(chat_id, user_id)
 
@@ -251,7 +257,7 @@ class CommandHandler:
             f"- home: {profile.home_dir}\n"
         )
 
-    def profile_switch(self, chat_id: int, user_id: int, selector: str) -> str | ProfileCommandResponse:
+    def profile_switch(self, chat_id: int, user_id: int, selector: str) -> Union[str, ProfileCommandResponse]:
         scope_key = self.scope_key(chat_id, user_id)
         remaining = self.store.profile_switch_cooldown_remaining(scope_key, self._profile_switch_cooldown_seconds)
         if remaining > 0:
@@ -626,7 +632,7 @@ class CommandHandler:
             f"- Last message: {session.last_message_at or 'none'}"
         )
 
-    def logs(self, args: list[str]) -> str | FileCommandResponse:
+    def logs(self, args: list[str]) -> Union[str, FileCommandResponse]:
         kind = args[0].lower() if args else "gateway"
         if kind == "gateway":
             path = self.config.gateway.state_dir / "gateway.log"
@@ -823,7 +829,7 @@ class CommandHandler:
         secondary = self._format_window(rate_limit.get("secondary_window"), "weekly")
         return [f"- {label}: {status}", f"  - {primary}", f"  - {secondary}"]
 
-    def _format_window(self, window: dict | None, fallback_label: str) -> str:
+    def _format_window(self, window: Optional[dict], fallback_label: str) -> str:
         if not window:
             return f"{fallback_label}: unavailable"
         seconds = int(window.get("limit_window_seconds") or 0)
@@ -861,7 +867,7 @@ class CommandHandler:
             chunks.append(f"{minutes}m")
         return " ".join(chunks)
 
-    def sendfile(self, chat_id: int, user_id: int, args: list[str]) -> str | FileCommandResponse:
+    def sendfile(self, chat_id: int, user_id: int, args: list[str]) -> Union[str, FileCommandResponse]:
         if not args:
             return "Usage: /sendfile <path> [caption]"
         raw_path = Path(args[0]).expanduser()
@@ -960,7 +966,7 @@ class CommandHandler:
         preset = self.config.codex.presets.get(name, {})
         return str(preset.get("mode", "")).lower() == "full" or bool(preset.get("full_access", False))
 
-    def _workspace_target(self, args: list[str]) -> Path | str:
+    def _workspace_target(self, args: list[str]) -> Union[Path, str]:
         selector = " ".join(args).strip()
         if selector.isdigit():
             index = int(selector) - 1
@@ -999,7 +1005,7 @@ class CommandHandler:
         return bool(self.config.codex.full_access)
 
     @staticmethod
-    def _effective_bool(value: bool | None, default: bool) -> bool:
+    def _effective_bool(value: Optional[bool], default: bool) -> bool:
         return default if value is None else bool(value)
 
     @staticmethod

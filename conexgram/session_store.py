@@ -10,6 +10,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Optional
 
 from .paths import DEFAULT_PROFILE_ROOT, ensure_dir, expand_path
 
@@ -68,20 +69,20 @@ class Session:
     chat_id: int
     user_id: int
     working_dir: str
-    model: str | None = None
-    reasoning_effort: str | None = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     mode: str = "safe"
     fast_mode: bool = False
-    full_access: bool | None = None
-    typing_indicator: bool | None = None
-    progress_messages: bool | None = None
-    codex_thread_id: str | None = None
+    full_access: Optional[bool] = None
+    typing_indicator: Optional[bool] = None
+    progress_messages: Optional[bool] = None
+    codex_thread_id: Optional[str] = None
     title: str = "Untitled session"
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
-    last_message_at: str | None = None
+    last_message_at: Optional[str] = None
     turn_count: int = 0
-    profile_id: str | None = None
+    profile_id: Optional[str] = None
 
 
 @dataclass
@@ -90,8 +91,8 @@ class CodexProfile:
     email: str
     display_name: str
     home_dir: str
-    last_seen_at: str | None = None
-    last_switched_at: str | None = None
+    last_seen_at: Optional[str] = None
+    last_switched_at: Optional[str] = None
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
 
@@ -107,7 +108,7 @@ class SessionStore:
         self.profiles: dict[str, CodexProfile] = {}
         self.profile_root = expand_path(profile_root)
         ensure_dir(self.profile_root)
-        self.update_offset: int | None = None
+        self.update_offset: Optional[int] = None
         self.last_profile_switch_by_scope: dict[str, str] = {}
         self.load()
         self.ensure_default_profile()
@@ -154,7 +155,7 @@ class SessionStore:
             self.update_offset = offset
             self.save()
 
-    def get_active(self, scope_key: str) -> Session | None:
+    def get_active(self, scope_key: str) -> Optional[Session]:
         with self._lock:
             session_id = self.active_by_scope.get(scope_key)
             if not session_id:
@@ -216,7 +217,11 @@ class SessionStore:
                 home_dir=item,
             )
 
-    def register_profile_from_home(self, home_dir: Path, profile_id: str | None = None) -> CodexProfile:
+    def register_profile_from_home(
+        self,
+        home_dir: Path,
+        profile_id: Optional[str] = None,
+    ) -> CodexProfile:
         email, display = _extract_profile_identity(home_dir)
         if email == "local":
             raise ValueError(f"Codex auth not found at {home_dir / '.codex' / 'auth.json'}")
@@ -231,8 +236,8 @@ class SessionStore:
         self,
         email: str,
         home_dir: Path,
-        display_name: str | None = None,
-        profile_id: str | None = None,
+        display_name: Optional[str] = None,
+        profile_id: Optional[str] = None,
     ) -> CodexProfile:
         normalized_email = (email or "").strip().lower()
         target_home = expand_path(home_dir)
@@ -272,7 +277,7 @@ class SessionStore:
         with self._lock:
             return sorted(self.profiles.values(), key=lambda item: item.created_at)
 
-    def get_profile(self, profile_id: str | None) -> CodexProfile | None:
+    def get_profile(self, profile_id: Optional[str]) -> Optional[CodexProfile]:
         if not profile_id:
             return None
         return self.profiles.get(profile_id)
@@ -317,7 +322,7 @@ class SessionStore:
         self.last_profile_switch_by_scope[scope_key] = now_iso()
         self.save()
 
-    def find_profile(self, selector: str) -> CodexProfile | None:
+    def find_profile(self, selector: str) -> Optional[CodexProfile]:
         selector = selector.strip().lower()
         if not selector:
             return None
@@ -345,13 +350,13 @@ class SessionStore:
         chat_id: int,
         user_id: int,
         working_dir: Path,
-        model: str | None,
-        reasoning_effort: str | None = None,
+        model: Optional[str],
+        reasoning_effort: Optional[str] = None,
         mode: str = "safe",
         fast_mode: bool = False,
-        full_access: bool | None = None,
-        title: str | None = None,
-        profile_id: str | None = None,
+        full_access: Optional[bool] = None,
+        title: Optional[str] = None,
+        profile_id: Optional[str] = None,
     ) -> Session:
         with self._lock:
             active_profile_id = profile_id or self.active_profile_id(scope_key)
@@ -385,7 +390,7 @@ class SessionStore:
             items = [s for s in self.sessions.values() if s.scope_key == scope_key]
             return sorted(items, key=lambda s: s.updated_at, reverse=True)
 
-    def find_for_scope(self, scope_key: str, selector: str) -> Session | None:
+    def find_for_scope(self, scope_key: str, selector: str) -> Optional[Session]:
         selector = selector.strip()
         scoped = self.list_for_scope(scope_key)
         if selector.isdigit():
@@ -397,7 +402,12 @@ class SessionStore:
                 return session
         return None
 
-    def clear_threads_for_profile(self, scope_key: str, profile_id: str, keep_session_id: str | None = None) -> list[str]:
+    def clear_threads_for_profile(
+        self,
+        scope_key: str,
+        profile_id: str,
+        keep_session_id: Optional[str] = None,
+    ) -> list[str]:
         with self._lock:
             changed = False
             affected: list[str] = []

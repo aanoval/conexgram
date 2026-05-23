@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from .config import CodexConfig
 from .paths import ensure_dir
@@ -21,7 +22,7 @@ LOG = logging.getLogger(__name__)
 @dataclass
 class CodexTurnResult:
     text: str
-    thread_id: str | None
+    thread_id: Optional[str]
     return_code: int
     raw_log_path: Path
     final_message_path: Path
@@ -43,7 +44,12 @@ class CodexRunner:
         self._processes: dict[str, subprocess.Popen[str]] = {}
         self._cleanup_logs()
 
-    def run_turn(self, session: Session, user_text: str, profile_home: Path | None = None) -> CodexTurnResult:
+    def run_turn(
+        self,
+        session: Session,
+        user_text: str,
+        profile_home: Optional[Path] = None,
+    ) -> CodexTurnResult:
         working_dir = Path(session.working_dir).expanduser().resolve()
         ensure_dir(self.logs_dir / session.id)
         stamp = now_iso().replace(":", "").replace("+", "Z")
@@ -71,7 +77,7 @@ class CodexRunner:
         with self._lock:
             self._processes[session.id] = process
 
-        thread_id: str | None = session.codex_thread_id
+        thread_id: Optional[str] = session.codex_thread_id
         agent_messages: list[str] = []
         raw_lines: list[str] = []
 
@@ -238,7 +244,7 @@ class CodexRunner:
         return self.config.full_access
 
     @staticmethod
-    def _parse_event(line: str) -> dict | None:
+    def _parse_event(line: str) -> Optional[dict]:
         line = line.strip()
         if not line.startswith("{"):
             return None

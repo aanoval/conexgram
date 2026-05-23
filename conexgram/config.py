@@ -6,7 +6,7 @@ import json
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from .paths import DEFAULT_CONFIG_PATH, DEFAULT_STATE_DIR, ensure_dir, expand_path
 
@@ -23,8 +23,8 @@ class TelegramConfig:
 class CodexConfig:
     binary: str = "codex"
     default_working_dir: Path = Path.cwd()
-    model: str | None = None
-    reasoning_effort: str | None = None
+    model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     mode: str = "safe"
     fast_mode: bool = False
     full_access: bool = False

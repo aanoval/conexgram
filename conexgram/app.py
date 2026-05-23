@@ -17,6 +17,7 @@ from .paths import ensure_dir
 from .progress import ProgressNotifier
 from .session_store import SessionStore, now_iso
 from .telegram_api import TelegramClient, TelegramMessage, TelegramApiError
+from typing import Optional, Union
 
 LOG = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class WorkItem:
 @dataclass(frozen=True)
 class AttachmentDirective:
     path_text: str
-    caption: str | None = None
+    caption: Optional[str] = None
 
 
 class GatewayApp:
@@ -212,8 +213,8 @@ class GatewayApp:
         self,
         chat_id: int,
         text: str,
-        reply_to_message_id: int | None = None,
-        reply_markup: dict | None = None,
+        reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[dict] = None,
     ) -> None:
         for chunk in split_message(text, self.config.gateway.max_telegram_message_chars):
             try:
@@ -231,8 +232,8 @@ class GatewayApp:
         self,
         chat_id: int,
         path: Path,
-        caption: str | None = None,
-        reply_to_message_id: int | None = None,
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
     ) -> None:
         try:
             self.telegram.send_document(
@@ -272,7 +273,7 @@ class GatewayApp:
         self,
         directive: AttachmentDirective,
         session,
-    ) -> FileCommandResponse | str:
+    ) -> Union[FileCommandResponse, str]:
         raw_path = Path(directive.path_text).expanduser()
         if raw_path.is_absolute():
             requested = raw_path.resolve()

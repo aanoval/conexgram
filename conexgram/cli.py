@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 from .app import GatewayApp, configure_logging
 from .config import DEFAULT_CONFIG_PATH, example_config_text, init_config, load_config
@@ -42,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command or "run"

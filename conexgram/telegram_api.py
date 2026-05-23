@@ -10,7 +10,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 LOG = logging.getLogger(__name__)
 
@@ -22,10 +22,10 @@ class TelegramMessage:
     chat_id: int
     user_id: int
     text: str
-    username: str | None = None
-    callback_query_id: str | None = None
-    document_file_id: str | None = None
-    document_file_name: str | None = None
+    username: Optional[str] = None
+    callback_query_id: Optional[str] = None
+    document_file_id: Optional[str] = None
+    document_file_name: Optional[str] = None
 
 
 class TelegramApiError(RuntimeError):
@@ -38,7 +38,7 @@ class TelegramClient:
         self.timeout_seconds = timeout_seconds
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
 
-    def get_updates(self, offset: int | None) -> list[dict[str, Any]]:
+    def get_updates(self, offset: Optional[int]) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {
             "timeout": self.timeout_seconds,
             "allowed_updates": ["message", "callback_query"],
@@ -52,8 +52,8 @@ class TelegramClient:
         self,
         chat_id: int,
         text: str,
-        reply_to_message_id: int | None = None,
-        reply_markup: dict[str, Any] | None = None,
+        reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[dict[str, Any]] = None,
     ) -> None:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -80,8 +80,8 @@ class TelegramClient:
         self,
         chat_id: int,
         file_path: Path,
-        caption: str | None = None,
-        reply_to_message_id: int | None = None,
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
     ) -> None:
         payload: dict[str, str] = {
             "chat_id": str(chat_id),
@@ -92,7 +92,7 @@ class TelegramClient:
             payload["reply_parameters"] = json.dumps({"message_id": reply_to_message_id})
         self._multipart_request("sendDocument", payload, "document", file_path, timeout=120)
 
-    def parse_text_message(self, update: dict[str, Any]) -> TelegramMessage | None:
+    def parse_text_message(self, update: dict[str, Any]) -> Optional[TelegramMessage]:
         message = update.get("message")
         if not isinstance(message, dict):
             callback = update.get("callback_query")
@@ -141,7 +141,7 @@ class TelegramClient:
         self,
         update: dict[str, Any],
         callback: dict[str, Any],
-    ) -> TelegramMessage | None:
+    ) -> Optional[TelegramMessage]:
         data = callback.get("data")
         message = callback.get("message")
         user = callback.get("from", {})

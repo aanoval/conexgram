@@ -7,6 +7,7 @@ import random
 import threading
 import time
 from collections.abc import Callable
+from typing import Optional
 
 from .config import ProgressConfig
 from .session_store import Session
@@ -15,7 +16,7 @@ from .telegram_api import TelegramApiError, TelegramClient
 LOG = logging.getLogger(__name__)
 
 
-SendText = Callable[[int, str, int | None], None]
+SendText = Callable[[int, str, Optional[int]], None]
 
 
 class ProgressNotifier:
@@ -73,7 +74,7 @@ class ProgressNotifier:
             stop_event.wait(wait_seconds)
 
     @staticmethod
-    def _effective_bool(value: bool | None, default: bool) -> bool:
+    def _effective_bool(value: Optional[bool], default: bool) -> bool:
         return default if value is None else bool(value)
 
 

@@ -8,7 +8,7 @@ import re
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -97,6 +97,15 @@ class CodexProfile:
     updated_at: str = field(default_factory=now_iso)
 
 
+@dataclass
+class PendingInvite:
+    code: str
+    owner_user_id: Optional[int]
+    owner_chat_id: Optional[int]
+    created_at: str
+    expires_at: str
+
+
 class SessionStore:
     def __init__(self, path: Path, profile_root: Path = DEFAULT_PROFILE_ROOT) -> None:
         self.path = expand_path(path)
@@ -105,6 +114,7 @@ class SessionStore:
         self.active_by_scope: dict[str, str] = {}
         self.sessions: dict[str, Session] = {}
         self.active_profile_by_scope: dict[str, str] = {}
+        self.pending_invites: dict[str, PendingInvite] = {}
         self.profiles: dict[str, CodexProfile] = {}
         self.profile_root = expand_path(profile_root)
         ensure_dir(self.profile_root)
@@ -133,6 +143,10 @@ class SessionStore:
                 sid: Session(**{**data, "profile_id": data.get("profile_id")})
                 for sid, data in raw.get("sessions", {}).items()
             }
+            self.pending_invites = {
+                code: PendingInvite(**value)
+                for code, value in raw.get("pending_invites", {}).items()
+            }
             self._scan_profile_root()
 
     def save(self) -> None:
@@ -144,6 +158,9 @@ class SessionStore:
                 "last_profile_switch_by_scope": self.last_profile_switch_by_scope,
                 "profiles": {pid: asdict(profile) for pid, profile in self.profiles.items()},
                 "sessions": {sid: asdict(session) for sid, session in self.sessions.items()},
+                "pending_invites": {
+                    code: asdict(invite) for code, invite in self.pending_invites.items()
+                },
             }
             tmp = self.path.with_name(f"{self.path.name}.{threading.get_ident()}.tmp")
             tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -423,3 +440,58 @@ class SessionStore:
             if changed:
                 self.save()
             return affected
+
+    def generate_invite_code(
+        self,
+        owner_user_id: Optional[int],
+        owner_chat_id: Optional[int],
+        ttl_seconds: int = 5 * 60,
+    ) -> str:
+        """Create a one-time invite code with expiry."""
+        expires_at = (datetime.now(UTC) + timedelta(seconds=ttl_seconds)).isoformat(timespec="seconds")
+        code = _random_invite_code(6)
+        while code in self.pending_invites:
+            code = _random_invite_code(6)
+        self.pending_invites[code] = PendingInvite(
+            code=code,
+            owner_user_id=owner_user_id,
+            owner_chat_id=owner_chat_id,
+            created_at=now_iso(),
+            expires_at=expires_at,
+        )
+        self.save()
+        return code
+
+    def consume_invite_code(self, raw_code: str) -> bool:
+        code = _normalize_code(raw_code)
+        invite = self.pending_invites.get(code)
+        if invite is None:
+            return False
+
+        try:
+            expires_at = datetime.fromisoformat(invite.expires_at)
+        except ValueError:
+            self.pending_invites.pop(code, None)
+            self.save()
+            return False
+
+        if datetime.now(UTC) > expires_at:
+            self.pending_invites.pop(code, None)
+            self.save()
+            return False
+
+        self.pending_invites.pop(code, None)
+        self.save()
+        return True
+
+
+def _normalize_code(value: str) -> str:
+    return "".join(ch for ch in value.strip().upper() if ch.isalnum())
+
+
+def _random_invite_code(length: int) -> str:
+    import secrets
+    import string
+
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))

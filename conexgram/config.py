@@ -16,6 +16,8 @@ class TelegramConfig:
     bot_token: str
     allowed_user_ids: set[int] = field(default_factory=set)
     allowed_chat_ids: set[int] = field(default_factory=set)
+    owner_user_id: Optional[int] = None
+    owner_chat_id: Optional[int] = None
     poll_timeout_seconds: int = 30
 
 
@@ -81,6 +83,8 @@ def example_config_text() -> str:
             "bot_token": "REPLACE_WITH_BOTFATHER_TOKEN",
             "allowed_user_ids": [123456789],
             "allowed_chat_ids": [],
+            "owner_user_id": None,
+            "owner_chat_id": None,
             "poll_timeout_seconds": 30,
         },
         "codex": {
@@ -142,6 +146,60 @@ def example_config_text() -> str:
     return json.dumps(example, indent=2) + "\n"
 
 
+def save_config(config: AppConfig) -> None:
+    """Persist AppConfig back to disk."""
+    config_path = expand_path(config.config_path)
+
+    data = {
+        "telegram": {
+            "bot_token": config.telegram.bot_token,
+            "allowed_user_ids": sorted(config.telegram.allowed_user_ids),
+            "allowed_chat_ids": sorted(config.telegram.allowed_chat_ids),
+            "owner_user_id": config.telegram.owner_user_id,
+            "owner_chat_id": config.telegram.owner_chat_id,
+            "poll_timeout_seconds": config.telegram.poll_timeout_seconds,
+        },
+        "codex": {
+            "binary": config.codex.binary,
+            "default_working_dir": str(config.codex.default_working_dir),
+            "model": config.codex.model or "",
+            "reasoning_effort": config.codex.reasoning_effort or "",
+            "mode": config.codex.mode,
+            "fast_mode": config.codex.fast_mode,
+            "full_access": config.codex.full_access,
+            "allow_runtime_full_access": config.codex.allow_runtime_full_access,
+            "max_turn_seconds": config.codex.max_turn_seconds,
+            "skip_git_repo_check": config.codex.skip_git_repo_check,
+            "additional_writable_dirs": [str(item) for item in config.codex.additional_writable_dirs],
+            "workspace_roots": [str(item) for item in config.codex.workspace_roots],
+            "model_presets": dict(config.codex.model_presets),
+            "presets": {name: dict(value) for name, value in config.codex.presets.items()},
+            "base_prompt": config.codex.base_prompt,
+        },
+        "gateway": {
+            "state_dir": str(config.gateway.state_dir),
+            "session_scope": config.gateway.session_scope,
+            "send_ack": config.gateway.send_ack,
+            "max_telegram_message_chars": config.gateway.max_telegram_message_chars,
+            "max_upload_bytes": config.gateway.max_upload_bytes,
+            "worker_count": config.gateway.worker_count,
+            "max_log_days": config.gateway.max_log_days,
+            "max_log_mb": config.gateway.max_log_mb,
+            "log_level": config.gateway.log_level,
+        },
+        "progress": {
+            "typing_indicator": config.progress.typing_indicator,
+            "typing_interval_seconds": config.progress.typing_interval_seconds,
+            "progress_messages": config.progress.progress_messages,
+            "progress_interval_seconds": config.progress.progress_interval_seconds,
+            "messages": config.progress.messages,
+        },
+    }
+
+    config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    config_path.chmod(0o600)
+
+
 def init_config(path: Path = DEFAULT_CONFIG_PATH, force: bool = False) -> Path:
     """Create a config file from the example."""
     path = expand_path(path)
@@ -169,8 +227,10 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
 
     allowed_user_ids = _int_set(telegram_raw.get("allowed_user_ids", []))
     allowed_chat_ids = _int_set(telegram_raw.get("allowed_chat_ids", []))
-    if not allowed_user_ids and not allowed_chat_ids:
-        raise ValueError("Configure telegram.allowed_user_ids or telegram.allowed_chat_ids")
+    owner_user_id = telegram_raw.get("owner_user_id")
+    owner_chat_id = telegram_raw.get("owner_chat_id")
+    owner_user_id = int(owner_user_id) if owner_user_id not in (None, "") else None
+    owner_chat_id = int(owner_chat_id) if owner_chat_id not in (None, "") else None
 
     codex_binary = str(codex_raw.get("binary", "codex")).strip() or "codex"
     if shutil.which(codex_binary) is None:
@@ -199,6 +259,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
             bot_token=bot_token,
             allowed_user_ids=allowed_user_ids,
             allowed_chat_ids=allowed_chat_ids,
+            owner_user_id=owner_user_id,
+            owner_chat_id=owner_chat_id,
             poll_timeout_seconds=int(telegram_raw.get("poll_timeout_seconds", 30)),
         ),
         codex=CodexConfig(

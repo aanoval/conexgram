@@ -31,7 +31,12 @@ def make_fake_auth(path: Path, email: str, name: str) -> None:
 def make_handler(tmp: str, max_upload_bytes: int = 1024) -> CommandHandler:
     root = Path(tmp)
     config = AppConfig(
-        telegram=TelegramConfig(bot_token="token", allowed_user_ids={2}),
+        telegram=TelegramConfig(
+            bot_token="token",
+            allowed_user_ids={2},
+            owner_user_id=2,
+            owner_chat_id=1,
+        ),
         codex=CodexConfig(
             binary="codex",
             default_working_dir=root,
@@ -246,6 +251,41 @@ class CommandHandlerTests(unittest.TestCase):
 
             response_again = handler.handle_command(f"/profile switch {target.id}", 1, 2)
             self.assertIn("rate-limited", response_again)
+
+    def test_invite_code_claim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            response = handler.handle_command("/invite", 1, 2)
+            invite_code = next(
+                (line.strip() for line in response.splitlines() if len(line.strip()) == 6),
+                None,
+            )
+            self.assertIsNotNone(invite_code)
+            self.assertNotIn(3, handler.config.telegram.allowed_user_ids)
+            self.assertTrue(handler.claim_invite_if_valid(invite_code, 3, 30))
+            self.assertIn(3, handler.config.telegram.allowed_user_ids)
+
+    def test_non_owner_cannot_invite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            response = handler.invite(99, 3, [])
+            self.assertEqual(response, "Only the owner can generate invite codes.")
+
+    def test_revoke_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            handler._authorize_user(user_id=5, chat_id=50)
+            self.assertIn(5, handler.config.telegram.allowed_user_ids)
+
+            response = handler.handle_command("/revoke 5", 1, 2)
+            self.assertEqual(response, "Revoked access for 5.")
+            self.assertNotIn(5, handler.config.telegram.allowed_user_ids)
+
+    def test_owner_cannot_revoke_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            response = handler.handle_command("/revoke 2", 1, 2)
+            self.assertEqual(response, "Owner cannot revoke itself.")
 
 
 if __name__ == "__main__":

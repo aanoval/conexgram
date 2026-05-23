@@ -8,7 +8,7 @@ import shutil
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -17,6 +17,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .config import AppConfig
+from .config import TelegramConfig, save_config
 from .session_store import Session, SessionStore
 
 
@@ -53,6 +54,89 @@ class CommandHandler:
     def is_allowed(self, chat_id: int, user_id: int) -> bool:
         telegram = self.config.telegram
         return user_id in telegram.allowed_user_ids or chat_id in telegram.allowed_chat_ids
+
+    def is_owner(self, chat_id: int, user_id: int) -> bool:
+        owner_user_id = self.config.telegram.owner_user_id
+        owner_chat_id = self.config.telegram.owner_chat_id
+        if (
+            (owner_user_id is not None and user_id == owner_user_id)
+            or (owner_chat_id is not None and chat_id == owner_chat_id)
+        ):
+            return True
+
+        allowed_users = self.config.telegram.allowed_user_ids
+        allowed_chats = self.config.telegram.allowed_chat_ids
+        if owner_user_id is None and owner_chat_id is None and (
+            user_id in allowed_users or chat_id in allowed_chats
+        ):
+            self._bootstrap_owner(chat_id=chat_id, user_id=user_id)
+            return True
+        return False
+
+    def _bootstrap_owner(self, user_id: int, chat_id: int) -> None:
+        telegram = self.config.telegram
+        if telegram.owner_user_id is not None or telegram.owner_chat_id is not None:
+            return
+        self.config = replace(
+            self.config,
+            telegram=TelegramConfig(
+                bot_token=telegram.bot_token,
+                allowed_user_ids=set(telegram.allowed_user_ids),
+                allowed_chat_ids=set(telegram.allowed_chat_ids),
+                owner_user_id=user_id,
+                owner_chat_id=chat_id,
+                poll_timeout_seconds=telegram.poll_timeout_seconds,
+            ),
+        )
+        save_config(self.config)
+
+    def claim_invite_if_valid(self, text: str, user_id: int, chat_id: int) -> bool:
+        if not self.store.consume_invite_code(text):
+            return False
+        self._authorize_user(chat_id=chat_id, user_id=user_id, set_owner_if_missing=False)
+        return True
+
+    def _authorize_user(
+        self,
+        user_id: int,
+        chat_id: int,
+        set_owner_if_missing: bool = False,
+    ) -> None:
+        telegram = self.config.telegram
+        allowed_users = set(telegram.allowed_user_ids)
+        allowed_chats = set(telegram.allowed_chat_ids)
+        changed = False
+
+        if user_id not in allowed_users:
+            allowed_users.add(user_id)
+            changed = True
+        if chat_id not in allowed_chats:
+            allowed_chats.add(chat_id)
+            changed = True
+
+        owner_user_id = telegram.owner_user_id
+        owner_chat_id = telegram.owner_chat_id
+
+        if set_owner_if_missing and owner_user_id is None:
+            owner_user_id = user_id
+            changed = True
+        if set_owner_if_missing and owner_chat_id is None:
+            owner_chat_id = chat_id
+            changed = True
+
+        if not changed:
+            return
+
+        new_telegram = TelegramConfig(
+            bot_token=telegram.bot_token,
+            allowed_user_ids=allowed_users,
+            allowed_chat_ids=allowed_chats,
+            owner_user_id=owner_user_id,
+            owner_chat_id=owner_chat_id,
+            poll_timeout_seconds=telegram.poll_timeout_seconds,
+        )
+        self.config = replace(self.config, telegram=new_telegram)
+        save_config(self.config)
 
     def ensure_session(self, chat_id: int, user_id: int) -> Session:
         scope_key = self.scope_key(chat_id, user_id)
@@ -134,6 +218,10 @@ class CommandHandler:
             return self.confirm(chat_id, user_id, args)
         if command == "/workspace":
             return self.workspace(chat_id, user_id, args)
+        if command == "/invite":
+            return self.invite(chat_id, user_id, args)
+        if command == "/revoke":
+            return self.revoke(chat_id, user_id, args)
         if command == "/permissions":
             return self.permissions(chat_id, user_id)
         if command == "/settings":
@@ -515,6 +603,68 @@ class CommandHandler:
         if isinstance(target, str):
             return target
         return self._set_workspace(chat_id, user_id, target)
+
+    def invite(self, chat_id: int, user_id: int, args: list[str]) -> str:
+        if not self.is_owner(chat_id=chat_id, user_id=user_id):
+            return "Only the owner can generate invite codes."
+
+        code = self.store.generate_invite_code(
+            owner_user_id=self.config.telegram.owner_user_id,
+            owner_chat_id=self.config.telegram.owner_chat_id,
+            ttl_seconds=5 * 60,
+        )
+        return (
+            "Use this code to link a new Telegram user:\n"
+            f"{code}\n\n"
+            "Share this exact code with the user. "
+            "It expires in 5 minutes and can only be used once."
+        )
+
+    def revoke(self, chat_id: int, user_id: int, args: list[str]) -> str:
+        if not self.is_owner(chat_id=chat_id, user_id=user_id):
+            return "Only the owner can revoke access."
+        if not args:
+            return "Usage: /revoke <telegram_user_id_or_chat_id>"
+
+        try:
+            target = int(args[0])
+        except ValueError:
+            return "Target must be a numeric Telegram user id or chat id."
+
+        owner_user_id = self.config.telegram.owner_user_id
+        owner_chat_id = self.config.telegram.owner_chat_id
+        if (owner_user_id is not None and target == owner_user_id) or (
+            owner_chat_id is not None and target == owner_chat_id
+        ):
+            return "Owner cannot revoke itself."
+
+        allowed_users = set(self.config.telegram.allowed_user_ids)
+        allowed_chats = set(self.config.telegram.allowed_chat_ids)
+
+        removed = False
+        if target in allowed_users:
+            allowed_users.remove(target)
+            removed = True
+        if target in allowed_chats:
+            allowed_chats.remove(target)
+            removed = True
+
+        if not removed:
+            return "Target not found in allowlist."
+
+        self.config = replace(
+            self.config,
+            telegram=TelegramConfig(
+                bot_token=self.config.telegram.bot_token,
+                allowed_user_ids=allowed_users,
+                allowed_chat_ids=allowed_chats,
+                owner_user_id=owner_user_id,
+                owner_chat_id=owner_chat_id,
+                poll_timeout_seconds=self.config.telegram.poll_timeout_seconds,
+            ),
+        )
+        save_config(self.config)
+        return f"Revoked access for {target}."
 
     def permissions(self, chat_id: int, user_id: int) -> str:
         session = self.ensure_session(chat_id, user_id)
@@ -919,6 +1069,8 @@ class CommandHandler:
             "/computer status|on|off - user-friendly alias for full access\n"
             "/confirm computer - confirm enabling Computer Access\n"
             "/workspace [list|switch <path-or-number>|<path>] - show or set workspace\n"
+            "/invite - generate a one-time 5-minute invite code (owner only)\n"
+            "/revoke <telegram_id_or_chat_id> - remove access (owner only)\n"
             "/permissions - show effective access settings\n"
             "/settings - show friendly settings panel\n"
             "/typing status|on|off|default - control typing indicator for this session\n"

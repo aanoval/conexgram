@@ -81,17 +81,14 @@ class GatewayApp:
 
     def _handle_message(self, message: TelegramMessage) -> None:
         if not self.commands.is_allowed(message.chat_id, message.user_id):
-            LOG.warning("Rejected message from user=%s chat=%s", message.user_id, message.chat_id)
-            self._send(
-                message.chat_id,
-                (
-                    "Unauthorized Telegram user or chat.\n"
-                    f"Your user id: {message.user_id}\n"
-                    f"This chat id: {message.chat_id}\n\n"
-                    "Ask the machine owner to add one of these IDs to the Conexgram config."
-                ),
-                message.message_id,
+            if self.commands.claim_invite_if_valid(message.text, message.user_id, message.chat_id):
+                self._send(
+                    message.chat_id,
+                    "Authorization complete. You can now use Conexgram.",
+                    message.message_id,
                 )
+            else:
+                LOG.warning("Rejected message from user=%s chat=%s", message.user_id, message.chat_id)
             return
 
         if message.document_file_id:

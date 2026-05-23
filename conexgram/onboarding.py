@@ -25,10 +25,9 @@ def run_first_run_onboarding(config_path: Path) -> None:
     Flow:
       1. Ask for Telegram bot token.
       2. Validate token with Telegram getMe.
-      3. Ask user to send one Telegram message to the bot.
-      4. Send welcome + verification code to that first sender.
-      5. Ask owner to paste the code in the terminal.
-      6. Persist allowed user/chat IDs and finish.
+      3. Generate a short one-time code.
+      4. Ask the first Telegram sender to reply with that code.
+      5. Persist owner + allowlist and finish.
     """
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
@@ -48,9 +47,6 @@ def run_first_run_onboarding(config_path: Path) -> None:
     code = _random_code(6)
 
     base.setdefault("telegram", {})["bot_token"] = bot_token
-    base.setdefault("telegram", {})["allowed_user_ids"] = []
-    base.setdefault("telegram", {})["allowed_chat_ids"] = []
-
     # Keep explicit, safe defaults even when config doesn't exist yet.
     workspace = Path.home() / "ConexgramWorkspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -69,9 +65,11 @@ def run_first_run_onboarding(config_path: Path) -> None:
         print(f"Open Telegram and send any message to @{bot_username}.")
     else:
         print("Open Telegram and send any message to your new bot.")
-    print("I will reply with a verification code, then ask you to paste it here.")
+    print("Send this code in your first Telegram message:")
+    print(f"{code}")
+    print("Waiting up to 5 minutes for owner verification.")
 
-    owner = _wait_owner_candidate(client)
+    owner = _wait_owner_candidate(client, code)
     if owner is None:
         raise OnboardingError("No incoming Telegram message received. Onboarding stopped.")
 
@@ -79,18 +77,15 @@ def run_first_run_onboarding(config_path: Path) -> None:
         owner["chat_id"],
         (
             "Welcome to Conexgram.\n"
-            "Your onboarding code is: "
-            f"{code}\n"
-            "Paste this code in the terminal where conexgram was started to complete setup."
+            "Your machine is now linked to this Telegram account.\n"
+            "Send /help in this chat to get started."
         ),
     )
 
-    entered = _prompt_verification_code(code)
-    if entered is None:
-        raise OnboardingError("Verification was not completed in this session.")
-
     base["telegram"]["allowed_user_ids"] = [owner["user_id"]]
     base["telegram"]["allowed_chat_ids"] = [owner["chat_id"]]
+    base["telegram"]["owner_user_id"] = owner["user_id"]
+    base["telegram"]["owner_chat_id"] = owner["chat_id"]
     _write_config(config_path, base)
 
     print("Configuration saved. Starting Conexgram...")
@@ -139,10 +134,13 @@ def _fetch_bot_username(client: TelegramClient) -> Optional[str]:
     return str(username) if isinstance(username, str) else None
 
 
-def _wait_owner_candidate(client: TelegramClient) -> Optional[dict[str, int]]:
+def _wait_owner_candidate(client: TelegramClient, expected_code: str) -> Optional[dict[str, int]]:
     last_update_id = _latest_update_offset(client)
+    start = time.time()
 
     while True:
+        if time.time() - start > 300:
+            return None
         try:
             updates = client.get_updates(last_update_id)
         except TelegramApiError:
@@ -152,6 +150,8 @@ def _wait_owner_candidate(client: TelegramClient) -> Optional[dict[str, int]]:
         for update in updates:
             message = client.parse_text_message(update)
             if message is None:
+                continue
+            if _normalize_code(message.text) != expected_code:
                 continue
 
             candidate = {"chat_id": message.chat_id, "user_id": message.user_id}
@@ -170,15 +170,10 @@ def _latest_update_offset(client: TelegramClient) -> Optional[int]:
     return max(int(update.get("update_id", 0)) for update in current) + 1
 
 
-def _prompt_verification_code(expected: str) -> Optional[str]:
-    for _ in range(5):
-        value = input("Paste verification code from Telegram: ").strip()
-        if value == expected:
-            return value
-        print("Verification code mismatch. Try again.")
-    return None
-
-
 def _random_code(length: int) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _normalize_code(value: str) -> str:
+    return "".join(ch for ch in value.strip().upper() if ch.isalnum())

@@ -1191,11 +1191,20 @@ class CommandHandler:
         for pattern in phrase_patterns:
             match = pattern.search(line)
             if match:
-                candidate = re.sub(r"[^A-Za-z0-9]", "", match.group(1)).upper()
+                candidate = match.group(1).strip().upper()
+                if re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4,5}", candidate):
+                    return candidate
+                # fallback legacy format with no separator
+                candidate = re.sub(r"[^A-Z0-9]", "", candidate)
                 if len(candidate) >= 6:
                     return candidate
         # Last-resort fallback: sometimes the CLI prints only the code on a single line.
-        # Require at least one digit to avoid false positives like "WELCOME".
+        # Prefer the 4-5 format for device-auth (AAAA-BBBBB) and only then fallback.
+        device_format_match = re.search(r"\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b", line.upper())
+        if device_format_match:
+            return device_format_match.group(0)
+
+        # Generic fallback for plain tokens (kept narrow to avoid false positives such as "WELCOME").
         fallback = re.findall(r"(?=[A-Za-z0-9-]*[0-9])[A-Za-z0-9-]{6,16}\b", line)
         for token in fallback:
             token = token.upper()

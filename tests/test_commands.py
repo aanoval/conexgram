@@ -214,6 +214,12 @@ class CommandHandlerTests(unittest.TestCase):
                 ),
                 None,
             )
+            self.assertEqual(
+                handler._extract_device_code(
+                    "Open this link and enter code: HWVN-TI03A"
+                ),
+                "HWVN-TI03A",
+            )
 
     def test_codexlogin_rejects_non_owner(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1188,6 +1188,7 @@ class CommandHandler:
             re.compile(r"device code[:\s]+([A-Za-z0-9-]{6,16})", re.IGNORECASE),
             re.compile(r"\bcode[:\s]+([A-Za-z0-9-]{6,16})", re.IGNORECASE),
         ]
+        banned_tokens = {"AUTHORIZATION", "WELCOME", "CODex", "CONEXGRAM"}
         for pattern in phrase_patterns:
             match = pattern.search(line)
             if match:
@@ -1198,19 +1199,31 @@ class CommandHandler:
                 candidate = re.sub(r"[^A-Z0-9]", "", candidate)
                 if len(candidate) >= 6:
                     return candidate
-        # Last-resort fallback: sometimes the CLI prints only the code on a single line.
-        # Prefer the 4-5 format for device-auth (AAAA-BBBBB) and only then fallback.
-        device_format_match = re.search(r"\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b", line.upper())
-        if device_format_match:
-            return device_format_match.group(0)
 
-        # Generic fallback for plain tokens (kept narrow to avoid false positives such as "WELCOME").
-        fallback = re.findall(r"(?=[A-Za-z0-9-]*[0-9])[A-Za-z0-9-]{6,16}\b", line)
-        for token in fallback:
-            token = token.upper()
-            if len(token) >= 6 and token != "WELCOME":
-                return token
+        # Last-resort fallback only for single token-like lines to avoid false positives.
+        tokenized = line.strip().split()
+        if len(tokenized) == 1:
+            candidate = tokenized[0].upper()
+            if candidate not in banned_tokens:
+                if re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4,5}", candidate):
+                    return candidate
+                if (
+                    len(candidate) >= 6
+                    and re.fullmatch(r"[A-Z0-9]+", candidate)
+                    and re.search(r"[0-9]", candidate)
+                ):
+                    return candidate
         return None
+
+    @staticmethod
+    def _is_code_prompt_line(line: str) -> bool:
+        lowered = line.lower()
+        return bool(
+            re.search(
+                r"(one[-\s]?time code|verification code|device code|enter .*code|authentication code|code code|kode verifikasi)",
+                lowered,
+            )
+        )
 
     def codex_device_login(self, chat_id: int, user_id: int) -> str:
         if not self.is_owner(chat_id=chat_id, user_id=user_id):
@@ -1245,6 +1258,8 @@ class CommandHandler:
                 )
 
                 timeout_state = {"fired": False}
+                waiting_for_raw_code = False
+                raw_code_attempts = 0
 
                 def _force_kill() -> None:
                     if process.poll() is None:
@@ -1261,7 +1276,36 @@ class CommandHandler:
                     with process:
                         assert process.stdout is not None
                         for raw in process.stdout:
-                            code = self._extract_device_code(raw)
+                            raw = raw.strip()
+                            if not raw:
+                                continue
+                            line = self._ANSI_ESCAPE_RE.sub("", raw).strip()
+                            code = self._extract_device_code(line)
+
+                            if waiting_for_raw_code and not emitted_code and code is None:
+                                fallback_candidate = None
+                                if (
+                                    not self._is_code_prompt_line(line)
+                                    and " " not in line
+                                ):
+                                    plain = line.upper()
+                                    if (
+                                        re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4,5}", plain)
+                                        or (
+                                            len(plain) >= 6
+                                            and re.fullmatch(r"[A-Z0-9]+", plain)
+                                            and re.search(r"[0-9]", plain)
+                                        )
+                                    ):
+                                        fallback_candidate = plain
+                                if fallback_candidate:
+                                    code = fallback_candidate
+                                else:
+                                    raw_code_attempts += 1
+                                    if raw_code_attempts >= 3:
+                                        waiting_for_raw_code = False
+                                        raw_code_attempts = 0
+
                             if code and not emitted_code:
                                 emitted_code = True
                                 self._notify(
@@ -1271,6 +1315,17 @@ class CommandHandler:
                                         f"{code}"
                                     ),
                                 )
+                                waiting_for_raw_code = False
+                                raw_code_attempts = 0
+                                continue
+
+                            if self._is_code_prompt_line(line):
+                                waiting_for_raw_code = True
+                                raw_code_attempts = 0
+                            elif waiting_for_raw_code and not code:
+                                raw_code_attempts = min(raw_code_attempts, 3)
+                            elif not code:
+                                waiting_for_raw_code = False
                         return_code = process.wait()
                 finally:
                     timeout_timer.cancel()

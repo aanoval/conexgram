@@ -287,6 +287,38 @@ class CommandHandlerTests(unittest.TestCase):
             response = handler.handle_command("/revoke 2", 1, 2)
             self.assertEqual(response, "Owner cannot revoke itself.")
 
+    def test_users_lists_connected_identities(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            handler.store.record_user_identity(
+                user_id=2,
+                chat_id=1,
+                username="owner_telegram",
+                first_name="Nunu",
+                last_name="Admin",
+            )
+            handler.store.record_user_identity(
+                user_id=5,
+                chat_id=50,
+                username="friend",
+                first_name="Ada",
+                last_name="User",
+            )
+            handler._authorize_user(user_id=5, chat_id=50)
+            response = handler.handle_command("/users", 1, 2)
+
+            self.assertIn("Connected users:", response)
+            self.assertIn("Owner", response)
+            self.assertIn("Nunu Admin", response)
+            self.assertIn("friend", response)
+            self.assertIn("ids: 5", response)
+
+    def test_users_restricted_to_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            response = handler.handle_command("/users", 99, 3)
+            self.assertEqual(response, "Only the owner can list connected users.")
+
 
 if __name__ == "__main__":
     unittest.main()

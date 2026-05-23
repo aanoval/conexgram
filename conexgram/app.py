@@ -80,6 +80,14 @@ class GatewayApp:
                 self._handle_message(message)
 
     def _handle_message(self, message: TelegramMessage) -> None:
+        self.store.record_user_identity(
+            user_id=message.user_id,
+            chat_id=message.chat_id,
+            username=message.username,
+            first_name=message.first_name,
+            last_name=message.last_name,
+        )
+
         if not self.commands.is_allowed(message.chat_id, message.user_id):
             if self.commands.claim_invite_if_valid(message.text, message.user_id, message.chat_id):
                 self._send(

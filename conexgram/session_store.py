@@ -106,6 +106,17 @@ class PendingInvite:
     expires_at: str
 
 
+@dataclass
+class ConnectedUser:
+    user_id: int
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    chat_ids: list[int] = field(default_factory=list)
+    last_chat_id: Optional[int] = None
+    last_seen_at: Optional[str] = None
+
+
 class SessionStore:
     def __init__(self, path: Path, profile_root: Path = DEFAULT_PROFILE_ROOT) -> None:
         self.path = expand_path(path)
@@ -116,6 +127,7 @@ class SessionStore:
         self.active_profile_by_scope: dict[str, str] = {}
         self.pending_invites: dict[str, PendingInvite] = {}
         self.profiles: dict[str, CodexProfile] = {}
+        self.connected_users: dict[int, ConnectedUser] = {}
         self.profile_root = expand_path(profile_root)
         ensure_dir(self.profile_root)
         self.update_offset: Optional[int] = None
@@ -147,6 +159,18 @@ class SessionStore:
                 code: PendingInvite(**value)
                 for code, value in raw.get("pending_invites", {}).items()
             }
+            self.connected_users = {
+                int(user_id): ConnectedUser(**{
+                    "user_id": int(user_id),
+                    "chat_ids": list(data.get("chat_ids") or []),
+                    "last_chat_id": data.get("last_chat_id"),
+                    "last_seen_at": data.get("last_seen_at"),
+                    "username": data.get("username"),
+                    "first_name": data.get("first_name"),
+                    "last_name": data.get("last_name"),
+                })
+                for user_id, data in raw.get("connected_users", {}).items()
+            }
             self._scan_profile_root()
 
     def save(self) -> None:
@@ -161,11 +185,56 @@ class SessionStore:
                 "pending_invites": {
                     code: asdict(invite) for code, invite in self.pending_invites.items()
                 },
+                "connected_users": {
+                    str(user_id): asdict(user)
+                    for user_id, user in self.connected_users.items()
+                },
             }
             tmp = self.path.with_name(f"{self.path.name}.{threading.get_ident()}.tmp")
             tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             tmp.replace(self.path)
             self.path.chmod(0o600)
+
+    def record_user_identity(
+        self,
+        user_id: int,
+        chat_id: int,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+    ) -> None:
+        with self._lock:
+            user = self.connected_users.get(user_id)
+            if user is None:
+                user = ConnectedUser(user_id=user_id)
+                self.connected_users[user_id] = user
+            if username is not None:
+                user.username = username
+            if first_name is not None:
+                user.first_name = first_name
+            if last_name is not None:
+                user.last_name = last_name
+            if chat_id not in user.chat_ids:
+                user.chat_ids.append(chat_id)
+            user.last_chat_id = chat_id
+            user.last_seen_at = now_iso()
+            self.save()
+
+    def get_connected_user(self, user_id: int) -> Optional[ConnectedUser]:
+        with self._lock:
+            return self.connected_users.get(user_id)
+
+    def list_connected_users(self) -> list[ConnectedUser]:
+        with self._lock:
+            return sorted(
+                self.connected_users.values(),
+                key=lambda item: (
+                    (item.last_name or "").lower(),
+                    (item.first_name or "").lower(),
+                    (item.username or "").lower(),
+                    str(item.user_id),
+                ),
+            )
 
     def set_update_offset(self, offset: int) -> None:
         with self._lock:

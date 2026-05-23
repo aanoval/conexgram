@@ -43,6 +43,34 @@ class SessionStoreTests(unittest.TestCase):
             store.save()
             self.assertFalse(store.consume_invite_code(code))
 
+    def test_record_user_identity_tracks_multiple_chats_and_updates_labels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sessions.json"
+            store = SessionStore(path)
+
+            store.record_user_identity(
+                user_id=7,
+                chat_id=100,
+                username="old_name",
+                first_name="Alice",
+                last_name="Ng",
+            )
+            store.record_user_identity(
+                user_id=7,
+                chat_id=101,
+                first_name="Alice2",
+                username=None,
+            )
+
+            reloaded = SessionStore(path)
+            user = reloaded.get_connected_user(7)
+            self.assertIsNotNone(user)
+            assert user is not None
+            self.assertEqual(user.username, "old_name")
+            self.assertEqual(user.first_name, "Alice2")
+            self.assertEqual(user.last_name, "Ng")
+            self.assertEqual(user.chat_ids, [100, 101])
+
 
 if __name__ == "__main__":
     unittest.main()

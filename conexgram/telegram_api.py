@@ -23,6 +23,8 @@ class TelegramMessage:
     user_id: int
     text: str
     username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     callback_query_id: Optional[str] = None
     document_file_id: Optional[str] = None
     document_file_name: Optional[str] = None
@@ -122,6 +124,8 @@ class TelegramClient:
         if chat_id is None or user_id is None or message_id is None:
             return None
         username = user.get("username")
+        first_name = user.get("first_name")
+        last_name = user.get("last_name")
         return TelegramMessage(
             update_id=int(update["update_id"]),
             message_id=int(message_id),
@@ -129,6 +133,8 @@ class TelegramClient:
             user_id=int(user_id),
             text=text.strip() or "/upload",
             username=str(username) if username else None,
+            first_name=str(first_name) if isinstance(first_name, str) and first_name.strip() else None,
+            last_name=str(last_name) if isinstance(last_name, str) and last_name.strip() else None,
             document_file_id=str(document.get("file_id")) if isinstance(document, dict) and document.get("file_id") else None,
             document_file_name=str(document.get("file_name")) if isinstance(document, dict) and document.get("file_name") else None,
         )
@@ -163,6 +169,8 @@ class TelegramClient:
         if chat_id is None or user_id is None or message_id is None or callback_query_id is None:
             return None
         username = user.get("username")
+        first_name = user.get("first_name")
+        last_name = user.get("last_name")
         return TelegramMessage(
             update_id=int(update["update_id"]),
             message_id=int(message_id),
@@ -170,6 +178,8 @@ class TelegramClient:
             user_id=int(user_id),
             text=data.strip(),
             username=str(username) if username else None,
+            first_name=str(first_name) if isinstance(first_name, str) and first_name.strip() else None,
+            last_name=str(last_name) if isinstance(last_name, str) and last_name.strip() else None,
             callback_query_id=str(callback_query_id),
         )
 

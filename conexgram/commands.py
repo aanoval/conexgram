@@ -18,7 +18,7 @@ from urllib.request import Request, urlopen
 
 from .config import AppConfig
 from .config import TelegramConfig, save_config
-from .session_store import Session, SessionStore
+from .session_store import ConnectedUser, Session, SessionStore
 
 
 @dataclass(frozen=True)
@@ -222,6 +222,8 @@ class CommandHandler:
             return self.invite(chat_id, user_id, args)
         if command == "/revoke":
             return self.revoke(chat_id, user_id, args)
+        if command == "/users":
+            return self.users(chat_id, user_id)
         if command == "/permissions":
             return self.permissions(chat_id, user_id)
         if command == "/settings":
@@ -666,6 +668,67 @@ class CommandHandler:
         save_config(self.config)
         return f"Revoked access for {target}."
 
+    def users(self, chat_id: int, user_id: int) -> str:
+        if not self.is_owner(chat_id=chat_id, user_id=user_id):
+            return "Only the owner can list connected users."
+
+        owner_user_id = self.config.telegram.owner_user_id
+        owner_chat_id = self.config.telegram.owner_chat_id
+        allowed_users = sorted(self.config.telegram.allowed_user_ids)
+        allowed_chats = sorted(self.config.telegram.allowed_chat_ids)
+        if not allowed_users and not allowed_chats:
+            return "No users are authorized yet."
+
+        lines = ["Connected users:"]
+        seen_chat_ids = set[int]()
+
+        ordered_user_ids = []
+        if owner_user_id is not None and owner_user_id in allowed_users:
+            ordered_user_ids.append(owner_user_id)
+        for uid in allowed_users:
+            if uid != owner_user_id:
+                ordered_user_ids.append(uid)
+
+        for uid in ordered_user_ids:
+            identity = self.store.get_connected_user(uid)
+            lines.append(self._format_connected_user(uid, identity, is_owner=(uid == owner_user_id)))
+            if identity and identity.last_chat_id is not None:
+                seen_chat_ids.add(identity.last_chat_id)
+
+        for cid in allowed_chats:
+            if cid in seen_chat_ids:
+                continue
+            if owner_chat_id is not None and cid == owner_chat_id and owner_user_id is None:
+                lines.append(
+                    f"- Owner (chat-only) | chat: {cid}"
+                )
+                continue
+            lines.append(f"- Chat-only access | chat: {cid}")
+            seen_chat_ids.add(cid)
+
+        if owner_chat_id is not None and owner_chat_id not in allowed_chats:
+            lines.append(f"- Owner linked in old config (chat: {owner_chat_id})")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_connected_user(user_id: int, identity: Optional[ConnectedUser], is_owner: bool = False) -> str:
+        role = "Owner" if is_owner else "User"
+        label = f"{identity.first_name or ''} {identity.last_name or ''}".strip()
+        if identity is not None:
+            if label and identity.username:
+                label = f"{label} (@{identity.username})"
+            elif identity.username and not label:
+                label = f"@{identity.username}"
+            elif not label:
+                label = f"user_id={user_id}"
+            chat_text = ", ".join(str(cid) for cid in identity.chat_ids) if identity.chat_ids else "unknown"
+            last_seen = identity.last_seen_at or "never"
+            return (
+                f"- {role} | {label} | ids: {user_id} | chats: {chat_text} | last_seen: {last_seen}"
+            )
+        return f"- {role} | user_id={user_id}"
+
     def permissions(self, chat_id: int, user_id: int) -> str:
         session = self.ensure_session(chat_id, user_id)
         return (
@@ -1071,6 +1134,7 @@ class CommandHandler:
             "/workspace [list|switch <path-or-number>|<path>] - show or set workspace\n"
             "/invite - generate a one-time 5-minute invite code (owner only)\n"
             "/revoke <telegram_id_or_chat_id> - remove access (owner only)\n"
+            "/users - list authorized users with Telegram identity labels (owner only)\n"
             "/permissions - show effective access settings\n"
             "/settings - show friendly settings panel\n"
             "/typing status|on|off|default - control typing indicator for this session\n"

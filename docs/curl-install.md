@@ -8,6 +8,19 @@ curl -fsSL https://conexgram.com/install.sh | bash
 
 The hosted script should serve `public/install.sh` directly.
 
+For direct pip installs, run:
+
+```bash
+python3 -m pip install conexgram
+python3 -m conexgram install-service
+```
+
+Or if you need setup + install in one pass:
+
+```bash
+bash scripts/pip_install_and_service.sh
+```
+
 ## What it does
 
 1. Creates a private virtual environment under `~/.conexgram/venv`

@@ -13,6 +13,19 @@ conexgram doctor --fix
 conexgram install-service
 ```
 
+If using pip directly:
+
+```bash
+python3 -m pip install conexgram
+python3 -m conexgram install-service
+```
+
+You can also run:
+
+```bash
+bash scripts/pip_install_and_service.sh
+```
+
 Upgrade:
 
 ```bash

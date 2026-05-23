@@ -32,6 +32,18 @@ conexgram doctor --fix
 conexgram install-service
 ```
 
+Direct `pip` install can be followed by auto-start in one command:
+
+```bash
+python3 -m pip install conexgram && python3 -m conexgram install-service
+```
+
+Or use the helper script:
+
+```bash
+bash scripts/pip_install_and_service.sh
+```
+
 Run in the foreground instead of installing a service:
 
 ```bash

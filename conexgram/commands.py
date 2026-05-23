@@ -1190,10 +1190,12 @@ class CommandHandler:
                 candidate = re.sub(r"[^A-Za-z0-9]", "", match.group(1)).upper()
                 if len(candidate) >= 6:
                     return candidate
-        fallback = re.findall(r"[A-Za-z0-9]{6,12}", line)
+        # Last-resort fallback: sometimes the CLI prints only the code on a single line.
+        # Require at least one digit to avoid false positives like "WELCOME".
+        fallback = re.findall(r"\b(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{6,12}\b", line)
         for token in fallback:
             token = token.upper()
-            if len(token) >= 6:
+            if len(token) >= 6 and token != "WELCOME":
                 return token
         return None
 

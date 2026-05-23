@@ -193,6 +193,12 @@ class CommandHandlerTests(unittest.TestCase):
             )
             self.assertEqual(handler._extract_device_code("Verification code: X9Y8Z7"), "X9Y8Z7")
 
+    def test_extract_device_code_ignores_noise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            self.assertIsNone(handler._extract_device_code("Welcome to Conexgram CLI"))
+            self.assertIsNone(handler._extract_device_code("WELCOME"))
+
     def test_codexlogin_rejects_non_owner(self):
         with tempfile.TemporaryDirectory() as tmp:
             handler = make_handler(tmp)

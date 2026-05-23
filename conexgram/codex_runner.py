@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -42,7 +43,7 @@ class CodexRunner:
         self._processes: dict[str, subprocess.Popen[str]] = {}
         self._cleanup_logs()
 
-    def run_turn(self, session: Session, user_text: str) -> CodexTurnResult:
+    def run_turn(self, session: Session, user_text: str, profile_home: Path | None = None) -> CodexTurnResult:
         working_dir = Path(session.working_dir).expanduser().resolve()
         ensure_dir(self.logs_dir / session.id)
         stamp = now_iso().replace(":", "").replace("+", "Z")
@@ -53,9 +54,14 @@ class CodexRunner:
         command = self._build_command(session, final_message_path)
         LOG.info("Running Codex: %s", " ".join(command))
 
+        env = os.environ.copy()
+        profile_home = profile_home or Path.home()
+        command_env = self._build_environment(profile_home, env)
+
         process = subprocess.Popen(
             command,
             cwd=str(working_dir),
+            env=command_env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -169,6 +175,23 @@ class CodexRunner:
             command.append(session.codex_thread_id)
         command.append("-")
         return command
+
+    def _build_environment(
+        self,
+        profile_home: Path,
+        base_env: dict[str, str],
+    ) -> dict[str, str]:
+        profile = profile_home
+        ensure_dir(profile)
+        env = dict(base_env)
+        env["HOME"] = str(profile)
+        env["XDG_CONFIG_HOME"] = str(Path(profile) / ".config")
+        env["XDG_STATE_HOME"] = str(Path(profile) / ".local" / "state")
+        env["XDG_CACHE_HOME"] = str(Path(profile) / ".cache")
+        ensure_dir(Path(profile) / ".config")
+        ensure_dir(Path(profile) / ".local" / "state")
+        ensure_dir(Path(profile) / ".cache")
+        return env
 
     def _build_prompt(self, session: Session, user_text: str) -> str:
         tool_prompt = self._gateway_tool_prompt()

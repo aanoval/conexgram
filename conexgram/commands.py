@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shlex
 import shutil
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -30,10 +31,18 @@ class MessageCommandResponse:
     reply_markup: dict | None = None
 
 
+@dataclass(frozen=True)
+class ProfileCommandResponse:
+    text: str
+    stop_session_ids: list[str]
+    reply_markup: dict | None = None
+
+
 class CommandHandler:
     def __init__(self, config: AppConfig, store: SessionStore) -> None:
         self.config = config
         self.store = store
+        self._profile_switch_cooldown_seconds = 45
 
     def scope_key(self, chat_id: int, user_id: int) -> str:
         if self.config.gateway.session_scope == "user":
@@ -48,6 +57,10 @@ class CommandHandler:
         scope_key = self.scope_key(chat_id, user_id)
         session = self.store.get_active(scope_key)
         if session is not None:
+            profile = self.active_profile(chat_id, user_id)
+            if session.profile_id != profile.id:
+                session.profile_id = profile.id
+                self.store.update(session)
             return session
         return self.store.create(
             scope_key=scope_key,
@@ -60,12 +73,21 @@ class CommandHandler:
             fast_mode=self.config.codex.fast_mode,
         )
 
+    def active_profile(self, chat_id: int, user_id: int):
+        return self.store.active_profile(self.scope_key(chat_id, user_id))
+
+    def active_profile_home(self, chat_id: int, user_id: int) -> Path:
+        return Path(self.active_profile(chat_id, user_id).home_dir)
+
+    def _profile_label(self, profile) -> str:
+        return f"{profile.display_name} <{profile.email}> [{profile.id}]"
+
     def handle_command(
         self,
         text: str,
         chat_id: int,
         user_id: int,
-    ) -> str | FileCommandResponse | MessageCommandResponse | None:
+    ) -> str | FileCommandResponse | MessageCommandResponse | ProfileCommandResponse | None:
         if not text.startswith("/"):
             return None
         try:
@@ -79,6 +101,8 @@ class CommandHandler:
 
         if command in {"/start", "/help"}:
             return self.help_text()
+        if command == "/profile":
+            return self.profile(chat_id, user_id, args)
         if command == "/new":
             return self.new_session(chat_id, user_id, args)
         if command == "/status":
@@ -136,9 +160,9 @@ class CommandHandler:
         if command == "/config":
             return self.config_text()
         if command in {"/quota", "/codexstatus"}:
-            return self.codex_usage()
+            return self.codex_usage(chat_id, user_id)
         if command == "/codex":
-            return self.codex_cli(args)
+            return self.codex_cli(chat_id, user_id, args)
         if command == "/sendfile":
             return self.sendfile(chat_id, user_id, args)
         if command == "/stop":
@@ -173,11 +197,101 @@ class CommandHandler:
             "Context is fresh. Send a normal message to start a new Codex thread."
         )
 
+    def profile(self, chat_id: int, user_id: int, args: list[str]) -> str | MessageCommandResponse | ProfileCommandResponse:
+        if not args:
+            return self.profile_status(chat_id, user_id)
+
+        action = args[0].lower()
+        if action in {"list", "ls"}:
+            return self.profile_list(chat_id, user_id)
+        if action in {"current", "status"}:
+            return self.profile_status(chat_id, user_id)
+        if action == "add":
+            if len(args) < 2:
+                return "Usage: /profile add <path>"
+            home = Path(" ".join(args[1:])).expanduser().resolve()
+            if not home.exists():
+                return f"Profile home directory not found: {home}"
+            try:
+                profile = self.store.register_profile_from_home(home)
+            except ValueError as exc:
+                return str(exc)
+            return (
+                "Profile added/updated.\n"
+                f"Profile: {self._profile_label(profile)}\n"
+                f"Auth path: {home / '.codex' / 'auth.json'}"
+            )
+        if action in {"switch", "use"}:
+            if len(args) < 2:
+                return "Usage: /profile switch <id|email|name>"
+            return self.profile_switch(chat_id, user_id, " ".join(args[1:]))
+        return "Usage: /profile [list|current|switch|add]"
+
+    def profile_list(self, chat_id: int, user_id: int) -> str:
+        scope_key = self.scope_key(chat_id, user_id)
+        active_profile_id = self.store.active_profile_id(scope_key)
+        lines = ["Codex profiles:"]
+        if not self.store.profiles:
+            return "No profiles registered yet."
+        for profile in self.store.list_profiles():
+            marker = "*" if profile.id == active_profile_id else " "
+            lines.append(f"{marker} {profile.id} | {profile.display_name} | {profile.email}")
+            if profile.id == active_profile_id:
+                lines.append(f"    path: {profile.home_dir}")
+        lines.append("Usage: /profile switch <id|email|name>")
+        return "\n".join(lines)
+
+    def profile_status(self, chat_id: int, user_id: int) -> str:
+        profile = self.active_profile(chat_id, user_id)
+        return (
+            "Active Codex profile:\n"
+            f"- id: {profile.id}\n"
+            f"- name: {profile.display_name}\n"
+            f"- email: {profile.email}\n"
+            f"- home: {profile.home_dir}\n"
+        )
+
+    def profile_switch(self, chat_id: int, user_id: int, selector: str) -> str | ProfileCommandResponse:
+        scope_key = self.scope_key(chat_id, user_id)
+        remaining = self.store.profile_switch_cooldown_remaining(scope_key, self._profile_switch_cooldown_seconds)
+        if remaining > 0:
+            return (
+                "Profile switching is currently rate-limited to prevent spam.\n"
+                f"Try again in {remaining} seconds."
+            )
+
+        target = self.store.find_profile(selector)
+        if target is None:
+            return "Profile not found. Use /profile list to see available profiles."
+        current_profile_id = self.store.active_profile_id(scope_key)
+        if target.id == current_profile_id:
+            return f"Profile already active: {self._profile_label(target)}"
+
+        # Stop active sessions in other profiles and clear their thread links
+        affected_sessions = self.store.clear_threads_for_profile(scope_key=scope_key, profile_id=target.id)
+
+        # Ensure active profile has up-to-date fields and record selection.
+        self.store.set_active_profile(scope_key, target.id)
+        self.store.mark_profile_switch(scope_key)
+        self.active_profile(chat_id, user_id)
+
+        return ProfileCommandResponse(
+            text=(
+                f"Switched active profile to: {self._profile_label(target)}\n"
+                f"Active profile home: {target.home_dir}\n"
+                "All old-session Codex threads from other profiles were cleared."
+            ),
+            stop_session_ids=affected_sessions,
+        )
+
     def status(self, chat_id: int, user_id: int) -> str:
         session = self.ensure_session(chat_id, user_id)
         thread = session.codex_thread_id or "not started yet"
+        profile = self.active_profile(chat_id, user_id)
         return (
             "Active session:\n"
+            f"- Active profile: {self._profile_label(profile)}\n"
+            f"- Profile home: {profile.home_dir}\n"
             f"- Gateway session: {session.id}\n"
             f"- Codex thread: {thread}\n"
             f"- Working directory: {session.working_dir}\n"
@@ -586,16 +700,19 @@ class CommandHandler:
             f"- Default cwd: {self.config.codex.default_working_dir}"
         )
 
-    def codex_cli(self, args: list[str]) -> str:
+    def codex_cli(self, chat_id: int, user_id: int, args: list[str]) -> str:
         if args and args[0].lower() == "status":
-            return self.codex_usage()
+            return self.codex_usage(chat_id, user_id)
 
         command = [self.config.codex.binary] + (args or ["--help"])
+        profile_home = self.active_profile_home(chat_id, user_id)
+        env = self._prepare_profile_env(profile_home)
         try:
             result = subprocess.run(
                 command,
                 check=False,
                 capture_output=True,
+                env=env,
                 text=True,
                 timeout=120,
                 cwd=str(self.config.codex.default_working_dir),
@@ -620,8 +737,10 @@ class CommandHandler:
             output = output[:limit].rstrip() + "\n\n... output truncated ..."
         return output
 
-    def codex_usage(self) -> str:
-        auth_path = Path.home() / ".codex" / "auth.json"
+    def codex_usage(self, chat_id: int, user_id: int) -> str:
+        scope_key = self.scope_key(chat_id, user_id)
+        profile = self.store.active_profile(scope_key=scope_key)
+        auth_path = Path(profile.home_dir) / ".codex" / "auth.json"
         if not auth_path.exists():
             return "Codex auth not found. Run `/codex login` first."
         try:
@@ -648,6 +767,14 @@ class CommandHandler:
             return f"Codex usage request failed: {exc}"
 
         return self._format_codex_usage(usage)
+
+    def _prepare_profile_env(self, profile_home: Path) -> dict[str, str]:
+        base = dict(os.environ)
+        base["HOME"] = str(profile_home)
+        base["XDG_CONFIG_HOME"] = str(profile_home / ".config")
+        base["XDG_STATE_HOME"] = str(profile_home / ".local" / "state")
+        base["XDG_CACHE_HOME"] = str(profile_home / ".cache")
+        return base
 
     def _format_codex_usage(self, usage: dict) -> str:
         lines = ["Codex usage:"]
@@ -767,6 +894,10 @@ class CommandHandler:
     def help_text() -> str:
         return (
             "Conexgram commands:\n"
+            "/profile list - list available Codex auth profiles\n"
+            "/profile current - show active Codex profile\n"
+            "/profile switch <id|email|name> - switch active profile\n"
+            "/profile add <path> - register profile from another codex home path\n"
             "/new [working_dir] - start a fresh Codex session\n"
             "/status - show the active session\n"
             "/sessions - list sessions\n"

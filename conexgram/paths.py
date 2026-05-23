@@ -7,6 +7,7 @@ from pathlib import Path
 
 DEFAULT_STATE_DIR = Path.home() / ".conexgram"
 DEFAULT_CONFIG_PATH = DEFAULT_STATE_DIR / "config.json"
+DEFAULT_PROFILE_ROOT = Path.home() / ".codex-profiles"
 
 
 def expand_path(value: str | Path) -> Path:

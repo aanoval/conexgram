@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .codex_runner import CodexRunner
-from .commands import CommandHandler, FileCommandResponse, MessageCommandResponse
+from .commands import CommandHandler, FileCommandResponse, MessageCommandResponse, ProfileCommandResponse
 from .config import AppConfig
 from .message_format import split_message
 from .paths import ensure_dir
@@ -111,6 +111,16 @@ class GatewayApp:
                 reply_to_message_id=message.message_id,
             )
             return
+        if isinstance(command_response, ProfileCommandResponse):
+            for session_id in command_response.stop_session_ids:
+                self.codex.stop_session(session_id)
+            self._send(
+                message.chat_id,
+                command_response.text,
+                message.message_id,
+                reply_markup=command_response.reply_markup,
+            )
+            return
         if isinstance(command_response, MessageCommandResponse):
             self._send(
                 message.chat_id,
@@ -147,7 +157,8 @@ class GatewayApp:
         session = self.commands.ensure_session(message.chat_id, message.user_id)
         progress_handle = self.progress.start(session, message.chat_id, message.message_id)
         try:
-            result = self.codex.run_turn(session, message.text)
+            profile_home = self.commands.active_profile_home(message.chat_id, message.user_id)
+            result = self.codex.run_turn(session, message.text, profile_home=profile_home)
         finally:
             progress_handle.stop()
 

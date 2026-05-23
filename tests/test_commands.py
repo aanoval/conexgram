@@ -1,10 +1,31 @@
+import base64
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from conexgram.commands import CommandHandler, FileCommandResponse, MessageCommandResponse
+from conexgram.commands import (
+    CommandHandler,
+    FileCommandResponse,
+    MessageCommandResponse,
+    ProfileCommandResponse,
+)
 from conexgram.config import AppConfig, CodexConfig, GatewayConfig, TelegramConfig
 from conexgram.session_store import SessionStore
+
+
+def make_fake_auth(path: Path, email: str, name: str) -> None:
+    payload = json.dumps({"email": email, "name": name}).encode("utf-8")
+    payload_encoded = base64.urlsafe_b64encode(payload).decode("utf-8").rstrip("=")
+    auth = {
+        "tokens": {
+            "id_token": f"header.{payload_encoded}.sig",
+            "access_token": "test-access-token",
+        }
+    }
+    auth_dir = path / ".codex"
+    auth_dir.mkdir(parents=True, exist_ok=True)
+    (auth_dir / "auth.json").write_text(json.dumps(auth), encoding="utf-8")
 
 
 def make_handler(tmp: str, max_upload_bytes: int = 1024) -> CommandHandler:
@@ -154,6 +175,77 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIn("5h: 16% used", response)
             self.assertIn("weekly: 92% used", response)
             self.assertIn("Credits: balance 0, no credits", response)
+
+    def test_profile_add_registers_and_lists_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            handler = make_handler(tmp)
+            profile_home = root / "alt-profile"
+            make_fake_auth(profile_home, "alt@example.com", "Alternate")
+
+            response = handler.handle_command(f"/profile add {profile_home}", 1, 2)
+            self.assertIn("Profile added/updated.", response)
+
+            response = handler.handle_command("/profile list", 1, 2)
+            self.assertIn("alt", response)
+            self.assertIn("alt@example.com", response)
+
+    def test_profile_switch_clears_other_profile_threads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            scope = handler.scope_key(1, 2)
+            home = Path(tmp) / "next"
+            make_fake_auth(home, "next@example.com", "Next Profile")
+            add_response = handler.handle_command(f"/profile add {home}", 1, 2)
+            self.assertIn("Profile added/updated.", add_response)
+
+            target = handler.store.find_profile("next")
+            assert target is not None
+
+            session_other = handler.store.create(
+                scope_key=scope,
+                chat_id=1,
+                user_id=2,
+                working_dir=Path(tmp),
+                model=None,
+                reasoning_effort=None,
+                mode="safe",
+                fast_mode=False,
+                title="other profile session",
+                profile_id="other",
+            )
+            session_other.codex_thread_id = "thread-other"
+            handler.store.update(session_other)
+            handler.store.set_active(scope, session_other.id)
+
+            session_target = handler.store.create(
+                scope_key=scope,
+                chat_id=1,
+                user_id=2,
+                working_dir=Path(tmp),
+                model=None,
+                reasoning_effort=None,
+                mode="safe",
+                fast_mode=False,
+                title="target profile session",
+                profile_id=target.id,
+            )
+            session_target.codex_thread_id = "thread-target"
+            handler.store.update(session_target)
+
+            response = handler.handle_command(f"/profile switch {target.id}", 1, 2)
+            self.assertIsInstance(response, ProfileCommandResponse)
+            assert isinstance(response, ProfileCommandResponse)
+            self.assertIn(target.id, response.text)
+            self.assertEqual(response.stop_session_ids, [session_other.id])
+
+            session_other = handler.store.sessions[session_other.id]
+            session_target = handler.store.sessions[session_target.id]
+            self.assertIsNone(session_other.codex_thread_id)
+            self.assertEqual(session_target.codex_thread_id, "thread-target")
+
+            response_again = handler.handle_command(f"/profile switch {target.id}", 1, 2)
+            self.assertIn("rate-limited", response_again)
 
 
 if __name__ == "__main__":

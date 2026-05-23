@@ -1215,16 +1215,6 @@ class CommandHandler:
                     return candidate
         return None
 
-    @staticmethod
-    def _is_code_prompt_line(line: str) -> bool:
-        lowered = line.lower()
-        return bool(
-            re.search(
-                r"(one[-\s]?time code|verification code|device code|enter .*code|authentication code|code code|kode verifikasi)",
-                lowered,
-            )
-        )
-
     def codex_device_login(self, chat_id: int, user_id: int) -> str:
         if not self.is_owner(chat_id=chat_id, user_id=user_id):
             return "Only the owner can start Codex device auth."
@@ -1258,8 +1248,6 @@ class CommandHandler:
                 )
 
                 timeout_state = {"fired": False}
-                waiting_for_raw_code = False
-                raw_code_attempts = 0
 
                 def _force_kill() -> None:
                     if process.poll() is None:
@@ -1276,56 +1264,11 @@ class CommandHandler:
                     with process:
                         assert process.stdout is not None
                         for raw in process.stdout:
-                            raw = raw.strip()
+                            raw = raw.rstrip()
                             if not raw:
                                 continue
-                            line = self._ANSI_ESCAPE_RE.sub("", raw).strip()
-                            code = self._extract_device_code(line)
-
-                            if waiting_for_raw_code and not emitted_code and code is None:
-                                fallback_candidate = None
-                                if (
-                                    not self._is_code_prompt_line(line)
-                                    and " " not in line
-                                ):
-                                    plain = line.upper()
-                                    if (
-                                        re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4,5}", plain)
-                                        or (
-                                            len(plain) >= 6
-                                            and re.fullmatch(r"[A-Z0-9]+", plain)
-                                            and re.search(r"[0-9]", plain)
-                                        )
-                                    ):
-                                        fallback_candidate = plain
-                                if fallback_candidate:
-                                    code = fallback_candidate
-                                else:
-                                    raw_code_attempts += 1
-                                    if raw_code_attempts >= 3:
-                                        waiting_for_raw_code = False
-                                        raw_code_attempts = 0
-
-                            if code and not emitted_code:
-                                emitted_code = True
-                                self._notify(
-                                    chat_id,
-                                    (
-                                        "Codex device auth code (send this to the link shown in your browser):\n"
-                                        f"{code}"
-                                    ),
-                                )
-                                waiting_for_raw_code = False
-                                raw_code_attempts = 0
-                                continue
-
-                            if self._is_code_prompt_line(line):
-                                waiting_for_raw_code = True
-                                raw_code_attempts = 0
-                            elif waiting_for_raw_code and not code:
-                                raw_code_attempts = min(raw_code_attempts, 3)
-                            elif not code:
-                                waiting_for_raw_code = False
+                            line = self._ANSI_ESCAPE_RE.sub("", raw)
+                            self._notify(chat_id, line)
                         return_code = process.wait()
                 finally:
                     timeout_timer.cancel()

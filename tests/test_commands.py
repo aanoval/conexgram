@@ -272,7 +272,7 @@ class CommandHandlerTests(unittest.TestCase):
                     break
                 time.sleep(0.05)
 
-            self.assertTrue(any("Codex device auth code" in item for item in notifications))
+            self.assertTrue(any("Verification code: ABC123" in item for item in notifications))
             self.assertTrue(any("Profile registered and set as active." in item for item in notifications))
 
     def test_codexlogin_uses_next_line_after_prompt_and_skips_noise(self):
@@ -319,14 +319,10 @@ class CommandHandlerTests(unittest.TestCase):
                     break
                 time.sleep(0.05)
 
-            auth_lines = [
-                item
-                for item in notifications
-                if "Codex device auth code" in item
-            ]
-            self.assertTrue(auth_lines, notifications)
-            self.assertIn("ABCD-12345", "\n".join(auth_lines))
-            self.assertNotIn("AUTHORIZATION", "\n".join(notifications))
+            output = "\n".join(notifications)
+            self.assertIn("Open this page and enter code:", output)
+            self.assertIn("AUTHORIZATION", output)
+            self.assertIn("ABCD-12345", output)
 
     def test_profile_add_registers_and_lists_profiles(self):
         with tempfile.TemporaryDirectory() as tmp:

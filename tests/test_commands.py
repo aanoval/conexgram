@@ -1,8 +1,11 @@
 import base64
 import json
+import io
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from conexgram.commands import (
     CommandHandler,
@@ -180,6 +183,68 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIn("5h: 16% used", response)
             self.assertIn("weekly: 92% used", response)
             self.assertIn("Credits: balance 0, no credits", response)
+
+    def test_extract_device_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            self.assertEqual(
+                handler._extract_device_code("Open this page and enter code: abc-123-xyz"),
+                "ABC123XYZ",
+            )
+            self.assertEqual(handler._extract_device_code("Verification code: X9Y8Z7"), "X9Y8Z7")
+
+    def test_codexlogin_rejects_non_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+
+            response = handler.handle_command("/codexlogin", 99, 3)
+            self.assertEqual(response, "Only the owner can start Codex device auth.")
+
+    def test_codexlogin_registers_new_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            handler = make_handler(tmp)
+            notifications: list[str] = []
+            handler.set_notify_callback(lambda _, text: notifications.append(text))
+
+            fake_profile_home = root / "login-home"
+            fake_profile_home.mkdir()
+
+            class FakePopen:
+                def __init__(self, *args, **kwargs):
+                    self.cwd = kwargs.get("cwd")
+                    self.stdout = io.StringIO(
+                        "Open this URL:\n"
+                        "Verification code: ABC123\n"
+                    )
+                    self.return_code = 0
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def wait(self):
+                    if self.cwd:
+                        make_fake_auth(Path(self.cwd), "dev@example.com", "Dev")
+                    return self.return_code
+
+            with patch("conexgram.commands.subprocess.Popen", FakePopen), patch.object(
+                handler,
+                "_create_login_profile_home",
+                return_value=fake_profile_home,
+            ):
+                response = handler.handle_command("/codexlogin", 1, 2)
+                self.assertIn("Started Codex device-auth", response)
+
+            for _ in range(50):
+                if any("Profile registered and set as active." in item for item in notifications):
+                    break
+                time.sleep(0.05)
+
+            self.assertTrue(any("Codex device auth code" in item for item in notifications))
+            self.assertTrue(any("Profile registered and set as active." in item for item in notifications))
 
     def test_profile_add_registers_and_lists_profiles(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -49,9 +49,13 @@ class GatewayApp:
             max_log_mb=config.gateway.max_log_mb,
         )
         self.commands = CommandHandler(config, self.store)
+        self.commands.set_notify_callback(self._notify_for_commands)
         self.progress = ProgressNotifier(self.telegram, config.progress, self._send)
         self.queue: queue.Queue[WorkItem] = queue.Queue()
         self.stop_event = threading.Event()
+
+    def _notify_for_commands(self, chat_id: int, text: str) -> None:
+        self._send(chat_id, text)
 
     def run(self) -> None:
         LOG.info("Starting Conexgram")

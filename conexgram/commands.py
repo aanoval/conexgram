@@ -8,11 +8,14 @@ import shutil
 import os
 import subprocess
 import sys
+import threading
+import time
+import re
+from typing import Callable, Optional, Union
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Optional, Union
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -45,6 +48,20 @@ class CommandHandler:
         self.config = config
         self.store = store
         self._profile_switch_cooldown_seconds = 45
+        self._codex_login_jobs: dict[str, bool] = {}
+        self._codex_login_lock = threading.Lock()
+        self._notify_cb: Optional[Callable[[int, str], None]] = None
+
+    def set_notify_callback(self, callback: Optional[Callable[[int, str], None]]) -> None:
+        self._notify_cb = callback
+
+    def _notify(self, chat_id: int, text: str) -> None:
+        if self._notify_cb is None:
+            return
+        try:
+            self._notify_cb(chat_id, text)
+        except Exception:
+            pass
 
     def scope_key(self, chat_id: int, user_id: int) -> str:
         if self.config.gateway.session_scope == "user":
@@ -254,6 +271,8 @@ class CommandHandler:
             return self.codex_usage(chat_id, user_id)
         if command == "/codex":
             return self.codex_cli(chat_id, user_id, args)
+        if command == "/codexlogin":
+            return self.codex_device_login(chat_id, user_id)
         if command == "/sendfile":
             return self.sendfile(chat_id, user_id, args)
         if command == "/stop":
@@ -1151,11 +1170,120 @@ class CommandHandler:
             "/quota - show Codex usage and rate-limit status\n"
             "/codexstatus - alias for /quota\n"
             "/codex <args> - run a native Codex CLI command\n"
+            "/codexlogin - start Codex device-auth flow in a fresh isolated profile\n"
             "/sendfile <path> [caption] - send a local file to Telegram\n"
             "/stop - stop the currently running Codex process\n"
             "/help - show this help\n\n"
             "Any non-command message is sent to the active Codex session."
         )
+
+    @staticmethod
+    def _extract_device_code(line: str) -> Optional[str]:
+        phrase_patterns = [
+            re.compile(r"code[:\s]+([A-Za-z0-9-]{6,12})", re.IGNORECASE),
+            re.compile(r"verification code[:\s]+([A-Za-z0-9-]{6,12})", re.IGNORECASE),
+            re.compile(r"device code[:\s]+([A-Za-z0-9-]{6,12})", re.IGNORECASE),
+        ]
+        for pattern in phrase_patterns:
+            match = pattern.search(line)
+            if match:
+                candidate = re.sub(r"[^A-Za-z0-9]", "", match.group(1)).upper()
+                if len(candidate) >= 6:
+                    return candidate
+        fallback = re.findall(r"[A-Za-z0-9]{6,12}", line)
+        for token in fallback:
+            token = token.upper()
+            if len(token) >= 6:
+                return token
+        return None
+
+    def codex_device_login(self, chat_id: int, user_id: int) -> str:
+        if not self.is_owner(chat_id=chat_id, user_id=user_id):
+            return "Only the owner can start Codex device auth."
+
+        scope_key = self.scope_key(chat_id, user_id)
+        with self._codex_login_lock:
+            if self._codex_login_jobs.get(scope_key):
+                return "Codex login is already in progress. Please complete it first."
+            self._codex_login_jobs[scope_key] = True
+
+        def run_login(scope_key: str) -> None:
+            profile_home: Optional[Path] = None
+            try:
+                profile_home = self._create_login_profile_home(user_id=user_id, chat_id=chat_id)
+                profile_home = profile_home
+                self._notify(
+                    chat_id,
+                    "Starting Codex device login. This usually prints a verification code below.",
+                )
+                emitted_code = False
+                command = [self.config.codex.binary, "login", "--device-auth"]
+                env = self._prepare_profile_env(profile_home)
+                process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    env=env,
+                    cwd=str(profile_home),
+                )
+                with process:
+                    assert process.stdout is not None
+                    for raw in process.stdout:
+                        code = self._extract_device_code(raw)
+                        if code and not emitted_code:
+                            emitted_code = True
+                            self._notify(
+                                chat_id,
+                                (
+                                    "Codex device auth code (send this to the link shown in your browser):\n"
+                                    f"{code}"
+                                ),
+                            )
+                    return_code = process.wait()
+
+                auth_path = profile_home / ".codex" / "auth.json"
+                if return_code != 0:
+                    self._notify(chat_id, f"Codex login exited with code {return_code}.")
+                    return
+                if not auth_path.exists():
+                    self._notify(chat_id, "Codex login completed, but auth file was not created.")
+                    return
+
+                profile = self.store.register_profile_from_home(profile_home)
+                self.store.set_active_profile(scope_key=scope_key, profile_id=profile.id)
+                self._notify(
+                    chat_id,
+                    (
+                        "Codex auth saved successfully.\n"
+                        f"Active profile: {profile.id} ({profile.email})\n"
+                        f"Path: {profile_home}\n"
+                        "Profile registered and set as active."
+                    ),
+                )
+            except Exception as exc:
+                self._notify(chat_id, f"Codex login failed: {exc}")
+            finally:
+                with self._codex_login_lock:
+                    self._codex_login_jobs.pop(scope_key, None)
+
+        threading.Thread(target=run_login, args=(scope_key,), daemon=True).start()
+        return (
+            "Started Codex device-auth in an isolated profile.\n"
+            "I will send the verification code and final status here when available."
+        )
+
+    def _create_login_profile_home(self, user_id: int, chat_id: int) -> Path:
+        base_label = f"codex-login-{user_id}-{chat_id}-{int(time.time())}"
+        safe_label = re.sub(r"[^a-zA-Z0-9._-]", "-", base_label).strip("-") or "codex-login"
+        home = self.store.profile_root / safe_label
+        if home.exists():
+            # Extremely unlikely collision, fallback with random suffix.
+            unique = f"{safe_label}-{int(time.time() * 1000) % 10000}"
+            home = self.store.profile_root / unique
+        home.mkdir(parents=True, exist_ok=True)
+        return home
 
     def _apply_preset(self, session: Session, name: str) -> None:
         preset = self.config.codex.presets[name]

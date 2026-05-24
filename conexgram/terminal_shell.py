@@ -72,7 +72,7 @@ class TerminalTheme:
 class TerminalUI:
     def __init__(self) -> None:
         self.theme = TerminalTheme()
-        self._prompt_tail_lines = 0
+        self._prompt_meta_active = False
 
     @property
     def interactive(self) -> bool:
@@ -93,7 +93,7 @@ class TerminalUI:
         sys.stdout.write(self.dim(meta[:width]) + "\n")
         sys.stdout.write("\033[4A\r")
         sys.stdout.flush()
-        self._prompt_tail_lines = 3
+        self._prompt_meta_active = True
         field = (
             "\001"
             + TerminalTheme.INPUT_BG
@@ -105,13 +105,13 @@ class TerminalUI:
 
     def finish_prompt(self) -> None:
         if self.theme.enabled:
-            tail_lines = self._prompt_tail_lines
-            self._prompt_tail_lines = 0
+            meta_active = self._prompt_meta_active
+            self._prompt_meta_active = False
             sys.stdout.write(TerminalTheme.RESET)
-            if tail_lines:
-                for _ in range(tail_lines):
-                    sys.stdout.write("\033[2K")
-                    sys.stdout.write("\033[1B\r")
+            if meta_active:
+                sys.stdout.write("\033[2B\r")
+                sys.stdout.write("\033[2K")
+                sys.stdout.write("\n")
             sys.stdout.flush()
 
     def box(self, title: str, body: str) -> str:
@@ -462,6 +462,9 @@ class TerminalShell:
         self.ui = TerminalUI()
         self.renderer = TerminalEventRenderer()
         self.session: Optional[Session] = None
+        self._turn_lock = threading.RLock()
+        self._turn_queue: list[str] = []
+        self._turn_thread: Optional[threading.Thread] = None
 
     def run(self, cwd: Optional[Path] = None, resume_selector: Optional[str] = None) -> int:
         working_dir = (cwd or Path.cwd()).expanduser().resolve()
@@ -501,17 +504,27 @@ class TerminalShell:
                 self.ui.finish_prompt()
             except EOFError:
                 self.ui.finish_prompt()
+                self._stop_active_turn()
                 print()
                 self.print_exit_summary()
                 return 0
             except KeyboardInterrupt:
                 self.ui.finish_prompt()
+                if self._cancel_queued_turns():
+                    continue
+                self._stop_active_turn()
                 print()
                 self.print_exit_summary()
                 return 0
 
             text = text.strip()
+            if "\x1b" in text:
+                self._cancel_queued_turns()
+                continue
             if not text:
+                continue
+            if self._is_working() and text.startswith("/") and text.lower() not in {"/exit", "/quit"}:
+                print(self.ui.warn("Codex is working. Wait for this turn to finish before running commands."))
                 continue
             if text.startswith("/"):
                 try:
@@ -520,10 +533,11 @@ class TerminalShell:
                     print(self.ui.error(f"Command error: {exc}"), file=sys.stderr)
                     should_continue = True
                 if not should_continue:
+                    self._stop_active_turn()
                     self.print_exit_summary()
                     return 0
                 continue
-            self._run_codex_turn(text)
+            self._start_or_queue_turn(text)
 
     def run_codex_args(self, args: list[str], cwd: Optional[Path] = None) -> int:
         if not self.active_profile_has_auth():
@@ -570,6 +584,61 @@ class TerminalShell:
         if self.session is None:
             raise RuntimeError("No active CLI session.")
         return self.session
+
+    def _start_or_queue_turn(self, text: str) -> None:
+        with self._turn_lock:
+            if self._turn_thread is not None and self._turn_thread.is_alive():
+                self._turn_queue.append(text)
+                print(
+                    self.ui.dim(
+                        f"Queued {len(self._turn_queue)} pending message(s). "
+                        "Ctrl-C cancels the queue."
+                    )
+                )
+                return
+            self._turn_thread = threading.Thread(
+                target=self._run_turn_worker,
+                args=(text,),
+                daemon=True,
+            )
+            self._turn_thread.start()
+
+    def _run_turn_worker(self, first_text: str) -> None:
+        text: Optional[str] = first_text
+        while text:
+            self._run_codex_turn(text)
+            with self._turn_lock:
+                if self._turn_queue:
+                    text = self._turn_queue.pop(0)
+                    print(self.ui.dim(f"Running queued message. {len(self._turn_queue)} still pending."))
+                else:
+                    self._turn_thread = None
+                    text = None
+
+    def _is_working(self) -> bool:
+        with self._turn_lock:
+            return self._turn_thread is not None and self._turn_thread.is_alive()
+
+    def _cancel_queued_turns(self) -> bool:
+        with self._turn_lock:
+            queued = len(self._turn_queue)
+            self._turn_queue.clear()
+        if queued:
+            print()
+            print(self.ui.warn(f"Canceled {queued} queued message(s)."))
+            return True
+        return False
+
+    def _stop_active_turn(self) -> None:
+        session = self.session
+        if session is None:
+            return
+        with self._turn_lock:
+            self._turn_queue.clear()
+            thread = self._turn_thread
+        self.runner.stop_session(session.id)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2)
 
     def _run_codex_turn(self, text: str) -> None:
         if not self.active_profile_has_auth():

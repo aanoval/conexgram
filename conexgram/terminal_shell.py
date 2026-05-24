@@ -301,9 +301,15 @@ class TerminalUI:
 class ProgressSpinner:
     FRAMES = ["|", "/", "-", "\\"]
 
-    def __init__(self, ui: TerminalUI, label: str = "Codex working") -> None:
+    def __init__(
+        self,
+        ui: TerminalUI,
+        label: str = "Codex working",
+        tick_callback: Optional[Callable[[str], None]] = None,
+    ) -> None:
         self.ui = ui
         self.label = label
+        self.tick_callback = tick_callback
         self.status = "starting"
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -333,7 +339,8 @@ class ProgressSpinner:
             print(f"- {status}")
             return
         with self._io_lock:
-            self._clear_line()
+            if self.tick_callback is None:
+                self._clear_line()
             print(self.ui.dim("- ") + self.ui.accent(status))
 
     def print_line(self, line: str) -> None:
@@ -341,7 +348,8 @@ class ProgressSpinner:
             print(line)
             return
         with self._io_lock:
-            self._clear_line()
+            if self.tick_callback is None:
+                self._clear_line()
             print(line)
 
     def stop(self) -> None:
@@ -350,6 +358,9 @@ class ProgressSpinner:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=1)
+        if self.tick_callback is not None:
+            self.tick_callback("")
+            return
         with self._io_lock:
             self._clear_line()
 
@@ -369,8 +380,11 @@ class ProgressSpinner:
                 frame = self.FRAMES[index % len(self.FRAMES)]
                 index += 1
                 line = f"{frame} {self.label} {minutes:02d}:{seconds:02d}"
-                with self._io_lock:
-                    print(self.ui.accent(line[: shutil.get_terminal_size((88, 24)).columns - 1]))
+                if self.tick_callback is not None:
+                    self.tick_callback(line)
+                else:
+                    with self._io_lock:
+                        print(self.ui.accent(line[: shutil.get_terminal_size((88, 24)).columns - 1]))
             time.sleep(0.25)
 
     @staticmethod
@@ -529,6 +543,8 @@ class TerminalShell:
         self._turn_lock = threading.RLock()
         self._turn_queue: list[str] = []
         self._turn_thread: Optional[threading.Thread] = None
+        self._progress_lock = threading.Lock()
+        self._progress_text = ""
         self._prompt_session: object = self._build_prompt_session()
 
     def run(self, cwd: Optional[Path] = None, resume_selector: Optional[str] = None) -> int:
@@ -628,7 +644,8 @@ class TerminalShell:
             style=Style.from_dict({
                 "": "bg:#303030 #e8e8e8",
                 "input-field": "bg:#303030 #e8e8e8",
-                "bottom-toolbar": "noinherit bg:default fg:#777777",
+                "rprompt": "noinherit bg:default fg:#777777",
+                "bottom-toolbar": "noinherit bg:default fg:#36a3ff",
             }),
         )
 
@@ -641,7 +658,9 @@ class TerminalShell:
             with patch_stdout(raw=True):
                 return self._prompt_session.prompt(  # type: ignore[attr-defined]
                     self.ui.prompt_fragments(),
-                    bottom_toolbar=self._prompt_meta_fragments,
+                    rprompt=self._prompt_meta_fragments,
+                    bottom_toolbar=self._progress_toolbar_fragments,
+                    refresh_interval=0.25,
                 )
         try:
             return input(self._prompt())
@@ -653,7 +672,18 @@ class TerminalShell:
         cwd = self._display_path(Path(session.working_dir))
         model = session.model or self.config.codex.model or "codex default"
         reasoning = session.reasoning_effort or self.config.codex.reasoning_effort or "default"
-        return [("class:bottom-toolbar", f"  {model} {reasoning} · {cwd}")]
+        return [("class:rprompt", f"{model} {reasoning} · {cwd}")]
+
+    def _progress_toolbar_fragments(self) -> StyleAndTextTuples:
+        with self._progress_lock:
+            progress_text = self._progress_text
+        if not progress_text:
+            return []
+        return [("class:bottom-toolbar", f" {progress_text}")]
+
+    def _set_progress_text(self, text: str) -> None:
+        with self._progress_lock:
+            self._progress_text = text
 
     def run_codex_args(self, args: list[str], cwd: Optional[Path] = None) -> int:
         if not self.active_profile_has_auth():
@@ -765,7 +795,7 @@ class TerminalShell:
         profile_home = Path(self.active_profile().home_dir)
         change_tracker = FileChangeTracker(Path(session.working_dir))
         before_changes = change_tracker.snapshot()
-        progress = ProgressSpinner(self.ui)
+        progress = ProgressSpinner(self.ui, tick_callback=self._set_progress_text)
         native_changes: set[tuple[str, str]] = set()
 
         def show_native_file_change(change: FileChange) -> None:

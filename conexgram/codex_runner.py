@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .config import CodexConfig
 from .paths import ensure_dir
@@ -49,6 +49,7 @@ class CodexRunner:
         session: Session,
         user_text: str,
         profile_home: Optional[Path] = None,
+        event_callback: Optional[Callable[[dict], None]] = None,
     ) -> CodexTurnResult:
         working_dir = Path(session.working_dir).expanduser().resolve()
         ensure_dir(self.logs_dir / session.id)
@@ -100,6 +101,11 @@ class CodexRunner:
                 event = self._parse_event(line)
                 if event is None:
                     continue
+                if event_callback is not None:
+                    try:
+                        event_callback(event)
+                    except Exception:
+                        LOG.exception("Codex event callback failed")
                 if event.get("type") == "thread.started":
                     thread_id = str(event.get("thread_id") or thread_id or "")
                 item = event.get("item")
@@ -111,6 +117,8 @@ class CodexRunner:
             return_code = process.wait()
         finally:
             timer.cancel()
+            if process.stdout is not None:
+                process.stdout.close()
             with self._lock:
                 if self._processes.get(session.id) is process:
                     self._processes.pop(session.id, None)

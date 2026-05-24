@@ -14,11 +14,12 @@ from .onboarding import OnboardingError, run_first_run_onboarding
 from .paths import ensure_dir, expand_path
 from .service import install_service, uninstall_service
 from .setup_wizard import run_setup
+from .terminal_shell import TerminalShell
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run Codex CLI from Telegram."
+        description="Run Codex CLI from Telegram or a Conexgram terminal shell."
     )
     parser.add_argument(
         "--config",
@@ -26,6 +27,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to config JSON. Default: ~/.conexgram/config.json",
     )
     subparsers = parser.add_subparsers(dest="command")
+
+    shell_parser = subparsers.add_parser("shell", help="Run the interactive Conexgram terminal shell.")
+    shell_parser.add_argument("--cwd", default="", help="Working directory for the new CLI session.")
+
+    codex_parser = subparsers.add_parser(
+        "codex",
+        add_help=False,
+        help="Run native Codex CLI args using the active Conexgram profile.",
+    )
+    codex_parser.add_argument("codex_args", nargs=argparse.REMAINDER)
 
     subparsers.add_parser("run", help="Run the Telegram polling gateway.")
 
@@ -46,8 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
-    command = args.command or "run"
+    args, unknown_args = parser.parse_known_args(argv)
+    if unknown_args and args.command != "codex":
+        parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
+    if args.command == "codex":
+        args.codex_args = list(getattr(args, "codex_args", []) or []) + unknown_args
+    command = args.command or "shell"
     config_path = Path(args.config).expanduser()
 
     if command == "example-config":
@@ -75,7 +90,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if command in {"doctor", "install-service"} and bool(getattr(args, "fix", False)):
         _doctor_fix_dirs(config_path)
 
-    if command == "run":
+    if command in {"run", "shell", "codex"}:
         config_loaded = False
         attempted_onboarding = False
         while not config_loaded:
@@ -139,6 +154,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         configure_logging(config.gateway.log_level, config.gateway.state_dir)
         GatewayApp(config).run()
         return 0
+
+    if command == "shell":
+        cwd_arg = str(getattr(args, "cwd", "") or "").strip()
+        cwd = Path(cwd_arg).expanduser().resolve() if cwd_arg else None
+        return TerminalShell(config).run(cwd=cwd)
+
+    if command == "codex":
+        return TerminalShell(config).run_codex_args(list(getattr(args, "codex_args", []) or []))
 
     parser.error(f"Unknown command: {command}")
     return 2

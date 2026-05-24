@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import threading
 import uuid
@@ -190,7 +191,9 @@ class SessionStore:
                     for user_id, user in self.connected_users.items()
                 },
             }
-            tmp = self.path.with_name(f"{self.path.name}.{threading.get_ident()}.tmp")
+            tmp = self.path.with_name(
+                f"{self.path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+            )
             tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             tmp.replace(self.path)
             self.path.chmod(0o600)

@@ -76,6 +76,37 @@ class CodexRunnerTests(unittest.TestCase):
             self.assertIn("CONEXGRAM_SEND_FILE:", prompt)
             self.assertIn("User message:\nsend this file", prompt)
 
+    def test_run_turn_emits_json_events_to_callback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            script = work / "fake-codex"
+            script.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "args = sys.argv\n"
+                "out = args[args.index('--output-last-message') + 1]\n"
+                "print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-1'}), flush=True)\n"
+                "print(json.dumps({'type': 'turn.started'}), flush=True)\n"
+                "open(out, 'w', encoding='utf-8').write('final text')\n",
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+            runner = CodexRunner(CodexConfig(binary=str(script), default_working_dir=work), work / "logs")
+            session = Session(
+                id="s1",
+                scope_key="cli:default",
+                chat_id=0,
+                user_id=0,
+                working_dir=str(work),
+            )
+            events = []
+
+            result = runner.run_turn(session, "hello", event_callback=events.append)
+
+            self.assertEqual(result.thread_id, "thread-1")
+            self.assertEqual(result.text, "final text")
+            self.assertEqual([event["type"] for event in events], ["thread.started", "turn.started"])
+
 
 if __name__ == "__main__":
     unittest.main()

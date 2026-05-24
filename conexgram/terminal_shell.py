@@ -126,6 +126,26 @@ class TerminalUI:
     def prompt_fragments(self) -> StyleAndTextTuples:
         return [("class:input-field", "› ")]
 
+    def user_input(self, text: str) -> str:
+        if not self.theme.enabled:
+            return f"› {text}"
+        width = max(24, shutil.get_terminal_size((88, 24)).columns - 1)
+        background = "\033[48;5;236m"
+        foreground = "\033[38;5;252m"
+        lines = text.splitlines() or [""]
+        rendered: list[str] = []
+        for index, line in enumerate(lines):
+            prefix = "› " if index == 0 else "  "
+            content = (prefix + line)[:width]
+            rendered.append(
+                background
+                + foreground
+                + content
+                + " " * max(0, width - self._visible_len(content))
+                + TerminalTheme.RESET
+            )
+        return "\n".join(rendered)
+
     def finish_prompt(self) -> None:
         if self.theme.enabled:
             meta_active = self._prompt_meta_active
@@ -339,18 +359,15 @@ class ProgressSpinner:
         return time.monotonic() - self._started_at
 
     def _run(self) -> None:
-        index = 0
+        last_printed_second = -1
         while not self._stop.is_set():
             elapsed = int(time.monotonic() - self._started_at)
             minutes, seconds = divmod(elapsed, 60)
-            with self._lock:
-                status = self.status
-            frame = self.FRAMES[index % len(self.FRAMES)]
-            index += 1
-            line = f"{frame} {self.label} {minutes:02d}:{seconds:02d}"
-            with self._io_lock:
-                sys.stdout.write("\r" + self.ui.accent(line[: shutil.get_terminal_size((88, 24)).columns - 1]))
-                sys.stdout.flush()
+            if elapsed != 0 and elapsed % 5 == 0 and elapsed != last_printed_second:
+                last_printed_second = elapsed
+                line = f"- {self.label} {minutes:02d}:{seconds:02d}"
+                with self._io_lock:
+                    print(self.ui.accent(line[: shutil.get_terminal_size((88, 24)).columns - 1]))
             time.sleep(0.25)
 
     @staticmethod
@@ -567,6 +584,7 @@ class TerminalShell:
                 continue
             if not text:
                 continue
+            print(self.ui.user_input(text))
             if self._is_working() and text.startswith("/") and text.lower() not in {"/exit", "/quit"}:
                 print(self.ui.warn("Codex is working. Wait for this turn to finish before running commands."))
                 continue
@@ -604,8 +622,9 @@ class TerminalShell:
             completer=TerminalCompleter(self),
             key_bindings=key_bindings,
             style=Style.from_dict({
+                "": "bg:#303030 #e8e8e8",
                 "input-field": "bg:#303030 #e8e8e8",
-                "bottom-toolbar": "fg:#777777",
+                "bottom-toolbar": "nobg fg:#777777",
             }),
         )
 
@@ -619,6 +638,7 @@ class TerminalShell:
                 return self._prompt_session.prompt(  # type: ignore[attr-defined]
                     self.ui.prompt_fragments(),
                     bottom_toolbar=self._prompt_meta_fragments,
+                    erase_when_done=True,
                 )
         try:
             return input(self._prompt())

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.error import HTTPError
@@ -31,6 +32,14 @@ CLI_CHAT_ID = 0
 CLI_USER_ID = 0
 
 
+@dataclass(frozen=True)
+class FileChange:
+    kind: str
+    path: str
+    added: int = 0
+    deleted: int = 0
+
+
 class TerminalTheme:
     RESET = "\033[0m"
     BLUE = "\033[34m"
@@ -42,6 +51,9 @@ class TerminalTheme:
     BOLD = "\033[1m"
     INPUT_BG = "\033[48;5;238m"
     INPUT_FG = "\033[38;5;252m"
+    CHANGE_ADD_BG = "\033[48;5;24m"
+    CHANGE_DELETE_BG = "\033[48;5;52m"
+    CHANGE_EDIT_BG = "\033[48;5;236m"
 
     def __init__(self) -> None:
         self.enabled = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
@@ -137,6 +149,39 @@ class TerminalUI:
 
     def dim(self, text: str) -> str:
         return self.theme.color(text, TerminalTheme.DIM)
+
+    def file_change(self, change: FileChange) -> str:
+        if change.kind == "add":
+            marker = self.ok("+")
+            label = self.ok("added")
+            background = TerminalTheme.CHANGE_ADD_BG
+            detail = f"lines +{change.added}" if change.added else "new file"
+        elif change.kind == "delete":
+            marker = self.error("-")
+            label = self.error("deleted")
+            background = TerminalTheme.CHANGE_DELETE_BG
+            detail = f"lines -{change.deleted}" if change.deleted else "removed"
+        else:
+            marker = self.warn("~")
+            label = self.warn("edited")
+            background = TerminalTheme.CHANGE_EDIT_BG
+            parts = []
+            if change.added:
+                parts.append(self.ok(f"+{change.added}"))
+            if change.deleted:
+                parts.append(self.error(f"-{change.deleted}"))
+            detail = "lines " + " ".join(parts) if parts else "changed"
+
+        line = f"{marker} {label} {change.path} {detail}"
+        if not self.theme.enabled:
+            return line
+        width = shutil.get_terminal_size((88, 24)).columns
+        padded = line + " " * max(0, width - self._visible_len(line) - 1)
+        return f"{background}{padded}{TerminalTheme.RESET}"
+
+    @staticmethod
+    def _visible_len(text: str) -> int:
+        return len(re.sub(r"\033\[[0-9;]*m", "", text))
 
     def highlight_response(self, text: str) -> str:
         if not self.theme.enabled:
@@ -280,6 +325,104 @@ class ProgressSpinner:
         width = shutil.get_terminal_size((88, 24)).columns
         sys.stdout.write("\r" + " " * max(1, width - 1) + "\r")
         sys.stdout.flush()
+
+
+class FileChangeTracker:
+    def __init__(self, working_dir: Path) -> None:
+        self.working_dir = working_dir.expanduser().resolve()
+        self.git_root = self._git_root()
+
+    def snapshot(self) -> dict[str, str]:
+        if self.git_root is None:
+            return {}
+        result = self._git(["status", "--porcelain=v1", "--untracked-files=all"])
+        if result is None:
+            return {}
+        status: dict[str, str] = {}
+        for line in result.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            raw_status = line[:2]
+            path_text = line[3:].strip()
+            if " -> " in path_text:
+                path_text = path_text.rsplit(" -> ", 1)[-1]
+            status[path_text] = raw_status
+        return status
+
+    def changes_since(self, before: dict[str, str]) -> list[FileChange]:
+        if self.git_root is None:
+            return []
+        after = self.snapshot()
+        changes: list[FileChange] = []
+        for path_text, raw_status in sorted(after.items()):
+            if before.get(path_text) == raw_status:
+                continue
+            kind = self._kind(raw_status)
+            added, deleted = self._line_stats(path_text, kind)
+            changes.append(FileChange(kind=kind, path=path_text, added=added, deleted=deleted))
+        return changes
+
+    def _git_root(self) -> Optional[Path]:
+        result = subprocess.run(
+            ["git", "-C", str(self.working_dir), "rev-parse", "--show-toplevel"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        root = result.stdout.strip()
+        return Path(root).resolve() if root else None
+
+    def _git(self, args: list[str]) -> Optional[subprocess.CompletedProcess[str]]:
+        if self.git_root is None:
+            return None
+        try:
+            return subprocess.run(
+                ["git", "-C", str(self.git_root), *args],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception:
+            return None
+
+    def _line_stats(self, path_text: str, kind: str) -> tuple[int, int]:
+        if kind == "add" and self.git_root is not None:
+            path = self.git_root / path_text
+            if path.exists() and path.is_file():
+                return self._count_file_lines(path), 0
+
+        result = self._git(["diff", "--numstat", "--", path_text])
+        if result is None or result.returncode != 0:
+            return 0, 0
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[2] == path_text:
+                return self._parse_numstat(parts[0]), self._parse_numstat(parts[1])
+        return 0, 0
+
+    @staticmethod
+    def _kind(raw_status: str) -> str:
+        if raw_status == "??" or "A" in raw_status:
+            return "add"
+        if "D" in raw_status:
+            return "delete"
+        return "edit"
+
+    @staticmethod
+    def _parse_numstat(value: str) -> int:
+        return int(value) if value.isdigit() else 0
+
+    @staticmethod
+    def _count_file_lines(path: Path) -> int:
+        try:
+            with path.open("rb") as handle:
+                return sum(1 for _ in handle)
+        except OSError:
+            return 0
 
 
 class TerminalShell:
@@ -433,6 +576,8 @@ class TerminalShell:
 
         session = self._require_session()
         profile_home = Path(self.active_profile().home_dir)
+        change_tracker = FileChangeTracker(Path(session.working_dir))
+        before_changes = change_tracker.snapshot()
         progress = ProgressSpinner(self.ui)
         renderer = TerminalEventRenderer(status_callback=progress.update)
         progress.start()
@@ -454,6 +599,11 @@ class TerminalShell:
 
         if result.return_code != 0:
             print(self.ui.error(f"Codex exited with code {result.return_code}."))
+        file_changes = change_tracker.changes_since(before_changes)
+        if file_changes:
+            print()
+            for change in file_changes:
+                print(self.ui.file_change(change))
         if result.text.strip():
             print()
             print(self.ui.highlight_response(result.text.strip()))

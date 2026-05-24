@@ -1,11 +1,12 @@
 import base64
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 from conexgram.config import AppConfig, CodexConfig, GatewayConfig, TelegramConfig
-from conexgram.terminal_shell import TerminalShell
+from conexgram.terminal_shell import FileChangeTracker, TerminalShell
 
 
 def make_fake_auth(path: Path, email: str, name: str) -> None:
@@ -72,6 +73,35 @@ class TerminalShellTests(unittest.TestCase):
             self.assertIn("Profile Switched", response)
             self.assertEqual(shell.active_profile().id, profile.id)
             self.assertEqual(shell.session.profile_id, profile.id)
+
+    def test_file_change_tracker_reports_new_modified_and_deleted_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+            tracked = root / "tracked.txt"
+            deleted = root / "deleted.txt"
+            tracked.write_text("old\n", encoding="utf-8")
+            deleted.write_text("gone\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, capture_output=True)
+
+            tracker = FileChangeTracker(root)
+            before = tracker.snapshot()
+
+            (root / "new.txt").write_text("a\nb\n", encoding="utf-8")
+            tracked.write_text("old\nnew\n", encoding="utf-8")
+            deleted.unlink()
+
+            changes = {item.path: item for item in tracker.changes_since(before)}
+
+            self.assertEqual(changes["new.txt"].kind, "add")
+            self.assertEqual(changes["new.txt"].added, 2)
+            self.assertEqual(changes["tracked.txt"].kind, "edit")
+            self.assertEqual(changes["tracked.txt"].added, 1)
+            self.assertEqual(changes["deleted.txt"].kind, "delete")
+            self.assertEqual(changes["deleted.txt"].deleted, 1)
 
 
 if __name__ == "__main__":

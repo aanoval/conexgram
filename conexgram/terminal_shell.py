@@ -39,8 +39,8 @@ class TerminalTheme:
     RED = "\033[31m"
     DIM = "\033[2m"
     BOLD = "\033[1m"
-    INPUT_BG = "\033[48;5;250m"
-    INPUT_FG = "\033[38;5;16m"
+    INPUT_BG = "\033[48;5;238m"
+    INPUT_FG = "\033[38;5;252m"
 
     def __init__(self) -> None:
         self.enabled = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
@@ -66,16 +66,19 @@ class TerminalUI:
 
     def prompt(self, cwd: str, profile_id: str, mode: str) -> str:
         if not self.theme.enabled:
-            return "you> "
-        label = self.theme.prompt_color("you", TerminalTheme.DIM)
+            return "› "
+        width = max(24, shutil.get_terminal_size((88, 24)).columns - 1)
+        sys.stdout.write(TerminalTheme.INPUT_BG + " " * width + TerminalTheme.RESET + "\n")
+        sys.stdout.write(TerminalTheme.INPUT_BG + " " * width + TerminalTheme.RESET + "\r")
+        sys.stdout.flush()
         field = (
             "\001"
             + TerminalTheme.INPUT_BG
             + TerminalTheme.INPUT_FG
             + "\002"
-            + "  "
+            + "› "
         )
-        return f"{label}\n{field}"
+        return field
 
     def finish_prompt(self) -> None:
         if self.theme.enabled:
@@ -149,11 +152,11 @@ class TerminalUI:
     def divider(self, label: str = "") -> str:
         width = shutil.get_terminal_size((88, 24)).columns
         if not label:
-            line = "-" * max(24, width)
+            line = "─" * max(24, width)
             return self.dim(line)
         label_text = f" {label} "
         side = max(3, (width - len(label_text)) // 2)
-        line = "-" * side + label_text + "-" * max(3, width - side - len(label_text))
+        line = "─" * side + label_text + "─" * max(3, width - side - len(label_text))
         return self.dim(line[:width])
 
     @staticmethod
@@ -162,8 +165,10 @@ class TerminalUI:
         minutes, secs = divmod(total, 60)
         hours, minutes = divmod(minutes, 60)
         if hours:
-            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-        return f"{minutes:02d}:{secs:02d}"
+            return f"{hours}h {minutes:02d}m {secs:02d}s"
+        if minutes:
+            return f"{minutes}m {secs:02d}s"
+        return f"{secs}s"
 
     def _width(self, body: str, title: str) -> int:
         terminal_width = shutil.get_terminal_size((88, 24)).columns
@@ -421,7 +426,7 @@ class TerminalShell:
         if result.text.strip():
             print()
             print(self.ui.highlight_response(result.text.strip()))
-            print(self.ui.divider(f"worked {self.ui.format_duration(worked_seconds)}"))
+            print(self.ui.divider(f"Worked for {self.ui.format_duration(worked_seconds)}"))
 
     def _handle_command(self, text: str) -> bool:
         parts = text.split()

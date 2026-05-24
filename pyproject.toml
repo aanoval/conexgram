@@ -27,7 +27,9 @@ classifiers = [
   "Topic :: Communications :: Chat",
   "Topic :: Software Development :: Build Tools"
 ]
-dependencies = []
+dependencies = [
+  "prompt_toolkit>=3.0,<4"
+]
 
 [project.scripts]
 conexgram = "conexgram.cli:main"

@@ -26,6 +26,26 @@ try:
 except ImportError:  # pragma: no cover - platform dependent
     readline = None  # type: ignore[assignment]
 
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.application import run_in_terminal
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.document import Document
+    from prompt_toolkit.formatted_text import StyleAndTextTuples
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.patch_stdout import patch_stdout
+    from prompt_toolkit.styles import Style
+except ImportError:  # pragma: no cover - optional fallback before dependencies are installed
+    PromptSession = None  # type: ignore[assignment]
+    run_in_terminal = None  # type: ignore[assignment]
+    Completer = object  # type: ignore[assignment,misc]
+    Completion = None  # type: ignore[assignment]
+    Document = object  # type: ignore[assignment,misc]
+    StyleAndTextTuples = list[tuple[str, str]]  # type: ignore[misc,assignment]
+    KeyBindings = None  # type: ignore[assignment]
+    patch_stdout = None  # type: ignore[assignment]
+    Style = None  # type: ignore[assignment]
+
 
 CLI_SCOPE_KEY = "cli:default"
 CLI_CHAT_ID = 0
@@ -102,6 +122,9 @@ class TerminalUI:
             + "› "
         )
         return field
+
+    def prompt_fragments(self) -> StyleAndTextTuples:
+        return [("class:input-field", "› ")]
 
     def finish_prompt(self) -> None:
         if self.theme.enabled:
@@ -435,6 +458,19 @@ class FileChangeTracker:
             return 0
 
 
+class TerminalCompleter(Completer):
+    def __init__(self, shell: "TerminalShell") -> None:
+        self.shell = shell
+
+    def get_completions(self, document: Document, complete_event: object) -> object:
+        if Completion is None:
+            return
+        buffer = document.text_before_cursor
+        text = document.get_word_before_cursor(WORD=True)
+        for option in self.shell._completion_options(buffer, text):
+            yield Completion(option, start_position=-len(text))
+
+
 class TerminalShell:
     """Run Codex turns directly from a terminal without Telegram."""
 
@@ -473,6 +509,7 @@ class TerminalShell:
         self._turn_lock = threading.RLock()
         self._turn_queue: list[str] = []
         self._turn_thread: Optional[threading.Thread] = None
+        self._prompt_session: object = self._build_prompt_session()
 
     def run(self, cwd: Optional[Path] = None, resume_selector: Optional[str] = None) -> int:
         working_dir = (cwd or Path.cwd()).expanduser().resolve()
@@ -508,8 +545,7 @@ class TerminalShell:
 
         while True:
             try:
-                text = input(self._prompt())
-                self.ui.finish_prompt()
+                text = self._read_input()
             except EOFError:
                 self.ui.finish_prompt()
                 self._stop_active_turn()
@@ -546,6 +582,55 @@ class TerminalShell:
                     return 0
                 continue
             self._start_or_queue_turn(text)
+
+    def _build_prompt_session(self) -> object:
+        if (
+            PromptSession is None
+            or KeyBindings is None
+            or Style is None
+            or not sys.stdin.isatty()
+            or not sys.stdout.isatty()
+        ):
+            return None
+        key_bindings = KeyBindings()
+
+        @key_bindings.add("escape")
+        def _cancel_queue(event: object) -> None:
+            if run_in_terminal is None:
+                return
+            run_in_terminal(self._cancel_queued_turns)
+
+        return PromptSession(
+            completer=TerminalCompleter(self),
+            key_bindings=key_bindings,
+            style=Style.from_dict({
+                "input-field": "bg:#303030 #e8e8e8",
+                "bottom-toolbar": "fg:#777777",
+            }),
+        )
+
+    def _read_input(self) -> str:
+        if (
+            self._prompt_session is not None
+            and patch_stdout is not None
+            and self.ui.interactive
+        ):
+            with patch_stdout(raw=True):
+                return self._prompt_session.prompt(  # type: ignore[attr-defined]
+                    self.ui.prompt_fragments(),
+                    bottom_toolbar=self._prompt_meta_fragments,
+                )
+        try:
+            return input(self._prompt())
+        finally:
+            self.ui.finish_prompt()
+
+    def _prompt_meta_fragments(self) -> StyleAndTextTuples:
+        session = self._require_session()
+        cwd = self._display_path(Path(session.working_dir))
+        model = session.model or self.config.codex.model or "codex default"
+        reasoning = session.reasoning_effort or self.config.codex.reasoning_effort or "default"
+        return [("class:bottom-toolbar", f"  {model} {reasoning} · {cwd}")]
 
     def run_codex_args(self, args: list[str], cwd: Optional[Path] = None) -> int:
         if not self.active_profile_has_auth():

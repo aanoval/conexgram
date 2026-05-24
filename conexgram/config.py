@@ -44,7 +44,7 @@ class CodexConfig:
 class GatewayConfig:
     state_dir: Path = DEFAULT_STATE_DIR
     session_scope: str = "chat"
-    send_ack: bool = True
+    send_ack: bool = False
     max_telegram_message_chars: int = 3900
     max_upload_bytes: int = 50 * 1024 * 1024
     worker_count: int = 1
@@ -122,7 +122,7 @@ def example_config_text() -> str:
         "gateway": {
             "state_dir": str(DEFAULT_STATE_DIR),
             "session_scope": "chat",
-            "send_ack": True,
+            "send_ack": False,
             "max_telegram_message_chars": 3900,
             "max_upload_bytes": 52428800,
             "worker_count": 1,
@@ -292,7 +292,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         gateway=GatewayConfig(
             state_dir=state_dir,
             session_scope=session_scope,
-            send_ack=bool(gateway_raw.get("send_ack", True)),
+            send_ack=bool(gateway_raw.get("send_ack", False)),
             max_telegram_message_chars=int(gateway_raw.get("max_telegram_message_chars", 3900)),
             max_upload_bytes=int(gateway_raw.get("max_upload_bytes", 50 * 1024 * 1024)),
             worker_count=max(1, int(gateway_raw.get("worker_count", 1))),

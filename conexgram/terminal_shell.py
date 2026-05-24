@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -25,6 +28,153 @@ except ImportError:  # pragma: no cover - platform dependent
 CLI_SCOPE_KEY = "cli:default"
 CLI_CHAT_ID = 0
 CLI_USER_ID = 0
+
+
+class TerminalTheme:
+    RESET = "\033[0m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    RED = "\033[31m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+
+    def __init__(self) -> None:
+        self.enabled = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+    def color(self, text: str, code: str) -> str:
+        if not self.enabled:
+            return text
+        return f"{code}{text}{self.RESET}"
+
+    def prompt_color(self, text: str, code: str) -> str:
+        if not self.enabled:
+            return text
+        return f"\001{code}\002{text}\001{self.RESET}\002"
+
+
+class TerminalUI:
+    def __init__(self) -> None:
+        self.theme = TerminalTheme()
+
+    @property
+    def interactive(self) -> bool:
+        return sys.stdout.isatty()
+
+    def prompt(self, cwd: str, profile_id: str, mode: str) -> str:
+        prefix = self.theme.prompt_color("conexgram", TerminalTheme.CYAN)
+        cwd_text = self.theme.prompt_color(cwd, TerminalTheme.GREEN)
+        profile = self.theme.prompt_color(profile_id, TerminalTheme.YELLOW)
+        mode_text = self.theme.prompt_color(mode, TerminalTheme.DIM)
+        return f"{prefix} {cwd_text} {profile} {mode_text}> "
+
+    def box(self, title: str, body: str) -> str:
+        width = self._width(body, title)
+        title_text = f" {title} " if title else ""
+        top = "+" + title_text + "-" * max(0, width - len(title_text) - 2) + "+"
+        bottom = "+" + "-" * (width - 2) + "+"
+        lines = [top]
+        for raw_line in body.splitlines() or [""]:
+            wrapped = self._wrap(raw_line, width - 4)
+            for line in wrapped:
+                lines.append(f"| {line.ljust(width - 4)} |")
+        lines.append(bottom)
+        return "\n".join(lines)
+
+    def table(self, title: str, rows: list[tuple[str, str]]) -> str:
+        key_width = max([len(key) for key, _ in rows] or [0])
+        body_lines: list[str] = []
+        for key, value in rows:
+            body_lines.append(f"{key.ljust(key_width)} : {value}")
+        return self.box(title, "\n".join(body_lines))
+
+    def ok(self, text: str) -> str:
+        return self.theme.color(text, TerminalTheme.GREEN)
+
+    def warn(self, text: str) -> str:
+        return self.theme.color(text, TerminalTheme.YELLOW)
+
+    def error(self, text: str) -> str:
+        return self.theme.color(text, TerminalTheme.RED)
+
+    def accent(self, text: str) -> str:
+        return self.theme.color(text, TerminalTheme.CYAN)
+
+    def _width(self, body: str, title: str) -> int:
+        terminal_width = shutil.get_terminal_size((88, 24)).columns
+        max_line = max([len(line) for line in body.splitlines()] + [len(title) + 4, 48])
+        return max(48, min(terminal_width, max_line + 4))
+
+    @staticmethod
+    def _wrap(text: str, width: int) -> list[str]:
+        if width <= 0:
+            return [text]
+        if not text:
+            return [""]
+        lines: list[str] = []
+        current = text
+        while len(current) > width:
+            lines.append(current[:width])
+            current = current[width:]
+        lines.append(current)
+        return lines
+
+
+class ProgressSpinner:
+    FRAMES = ["|", "/", "-", "\\"]
+
+    def __init__(self, ui: TerminalUI, label: str = "Codex working") -> None:
+        self.ui = ui
+        self.label = label
+        self.status = "starting"
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._started_at = 0.0
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        self._started_at = time.monotonic()
+        if not self.ui.interactive:
+            print(f"{self.label}...")
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def update(self, status: str) -> None:
+        status = status.strip()
+        if not status:
+            return
+        with self._lock:
+            self.status = status
+
+    def stop(self) -> None:
+        if not self.ui.interactive:
+            return
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+        self._clear_line()
+
+    def _run(self) -> None:
+        index = 0
+        while not self._stop.is_set():
+            elapsed = int(time.monotonic() - self._started_at)
+            minutes, seconds = divmod(elapsed, 60)
+            with self._lock:
+                status = self.status
+            frame = self.FRAMES[index % len(self.FRAMES)]
+            index += 1
+            line = f"{frame} {self.label} {minutes:02d}:{seconds:02d}  {status}"
+            sys.stdout.write("\r" + self.ui.accent(line[: shutil.get_terminal_size((88, 24)).columns - 1]))
+            sys.stdout.flush()
+            time.sleep(0.25)
+
+    @staticmethod
+    def _clear_line() -> None:
+        width = shutil.get_terminal_size((88, 24)).columns
+        sys.stdout.write("\r" + " " * max(1, width - 1) + "\r")
+        sys.stdout.flush()
 
 
 class TerminalShell:
@@ -59,6 +209,7 @@ class TerminalShell:
             max_log_days=config.gateway.max_log_days,
             max_log_mb=config.gateway.max_log_mb,
         )
+        self.ui = TerminalUI()
         self.renderer = TerminalEventRenderer()
         self.session: Optional[Session] = None
 
@@ -71,13 +222,20 @@ class TerminalShell:
         self._install_completer()
         self.session = self._create_session(working_dir)
         profile = self.active_profile()
-        print("Conexgram CLI shell")
-        print(f"Session: {self.session.id}")
-        print(f"Workspace: {self.session.working_dir}")
-        print(f"Profile: {self._profile_label(profile)}")
-        print("Type /help for commands, /exit to quit.")
+        print(
+            self.ui.table(
+                "Conexgram CLI",
+                [
+                    ("Workspace", str(self.session.working_dir)),
+                    ("Profile", self._profile_label(profile)),
+                    ("Session", self.session.id[:8]),
+                    ("Mode", self.session.mode),
+                ],
+            )
+        )
+        print(self.ui.accent("Type /help for commands, /exit to quit."))
         if not self.active_profile_has_auth():
-            print(self.codex_not_ready_message())
+            print(self.ui.warn(self.codex_not_ready_message()))
 
         while True:
             try:
@@ -86,7 +244,7 @@ class TerminalShell:
                 print()
                 return 0
             except KeyboardInterrupt:
-                print("\nInterrupted. Type /exit to quit.")
+                print("\n" + self.ui.warn("Interrupted. Type /exit to quit."))
                 continue
 
             text = text.strip()
@@ -96,7 +254,7 @@ class TerminalShell:
                 try:
                     should_continue = self._handle_command(text)
                 except Exception as exc:
-                    print(f"Command error: {exc}", file=sys.stderr)
+                    print(self.ui.error(f"Command error: {exc}"), file=sys.stderr)
                     should_continue = True
                 if not should_continue:
                     return 0
@@ -126,7 +284,7 @@ class TerminalShell:
         session = self._require_session()
         cwd = Path(session.working_dir).name or session.working_dir
         profile = self.active_profile()
-        return f"conexgram:{cwd} [{profile.id}]> "
+        return self.ui.prompt(str(cwd), profile.id, session.mode)
 
     def _create_session(self, working_dir: Path) -> Session:
         return self.store.create(
@@ -154,14 +312,18 @@ class TerminalShell:
 
         session = self._require_session()
         profile_home = Path(self.active_profile().home_dir)
-        print("Codex is working...")
-        self.renderer.reset()
-        result = self.runner.run_turn(
-            session,
-            text,
-            profile_home=profile_home,
-            event_callback=self.renderer.render,
-        )
+        progress = ProgressSpinner(self.ui)
+        renderer = TerminalEventRenderer(status_callback=progress.update)
+        progress.start()
+        try:
+            result = self.runner.run_turn(
+                session,
+                text,
+                profile_home=profile_home,
+                event_callback=renderer.render,
+            )
+        finally:
+            progress.stop()
         if result.thread_id and not session.codex_thread_id:
             session.codex_thread_id = result.thread_id
         session.turn_count += 1
@@ -169,10 +331,9 @@ class TerminalShell:
         self.store.update(session)
 
         if result.return_code != 0:
-            print(f"Codex exited with code {result.return_code}.")
+            print(self.ui.error(f"Codex exited with code {result.return_code}."))
         if result.text.strip():
-            print("\nCodex response:")
-            print(result.text.strip())
+            print(self.ui.box("Codex", result.text.strip()))
 
     def _handle_command(self, text: str) -> bool:
         parts = text.split()
@@ -181,7 +342,7 @@ class TerminalShell:
         if command in {"/exit", "/quit"}:
             return False
         if command == "/help":
-            print(self.help_text())
+            print(self.ui.box("Commands", self.help_text()))
             return True
         if command == "/status":
             print(self.status_text())
@@ -213,7 +374,7 @@ class TerminalShell:
         if command == "/mode":
             print(self.mode_command(args))
             return True
-        print("Unknown command. Type /help for available commands.")
+        print(self.ui.warn("Unknown command. Type /help for available commands."))
         return True
 
     def help_text(self) -> str:
@@ -239,16 +400,18 @@ class TerminalShell:
         session = self._require_session()
         profile = self.active_profile()
         thread = session.codex_thread_id or "not started yet"
-        return (
-            "Active CLI session:\n"
-            f"- Session: {session.id}\n"
-            f"- Codex thread: {thread}\n"
-            f"- Workspace: {session.working_dir}\n"
-            f"- Profile: {self._profile_label(profile)}\n"
-            f"- Model: {session.model or 'Codex default'}\n"
-            f"- Reasoning: {session.reasoning_effort or 'Codex default'}\n"
-            f"- Mode: {session.mode}\n"
-            f"- Turns: {session.turn_count}"
+        return self.ui.table(
+            "Active Session",
+            [
+                ("Session", session.id),
+                ("Codex thread", thread),
+                ("Workspace", session.working_dir),
+                ("Profile", self._profile_label(profile)),
+                ("Model", session.model or "Codex default"),
+                ("Reasoning", session.reasoning_effort or "Codex default"),
+                ("Mode", session.mode),
+                ("Turns", str(session.turn_count)),
+            ],
         )
 
     def sessions_text(self) -> str:
@@ -256,7 +419,7 @@ class TerminalShell:
         if not sessions:
             return "No CLI sessions yet."
         active = self._require_session()
-        lines = ["CLI sessions:"]
+        lines = []
         for index, session in enumerate(sessions[:30], start=1):
             marker = "*" if session.id == active.id else " "
             thread = "started" if session.codex_thread_id else "fresh"
@@ -264,7 +427,7 @@ class TerminalShell:
                 f"{marker} {index}. {session.id[:8]} {thread} "
                 f"turns={session.turn_count} cwd={session.working_dir}"
             )
-        return "\n".join(lines)
+        return self.ui.box("CLI Sessions", "\n".join(lines))
 
     def switch_session(self, args: list[str]) -> str:
         if not args:
@@ -274,14 +437,20 @@ class TerminalShell:
             return "Session not found. Use /sessions to list available sessions."
         self.store.set_active(CLI_SCOPE_KEY, session.id)
         self.session = session
-        return f"Switched to session {session.id}\nWorkspace: {session.working_dir}"
+        return self.ui.table(
+            "Session Switched",
+            [("Session", session.id), ("Workspace", session.working_dir)],
+        )
 
     def new_session(self, args: list[str]) -> str:
         working_dir = Path(" ".join(args)).expanduser().resolve() if args else Path.cwd().resolve()
         if not working_dir.exists() or not working_dir.is_dir():
             return f"Working directory not found: {working_dir}"
         self.session = self._create_session(working_dir)
-        return f"New CLI session: {self.session.id}\nWorkspace: {self.session.working_dir}"
+        return self.ui.table(
+            "New Session",
+            [("Session", self.session.id), ("Workspace", self.session.working_dir)],
+        )
 
     def cwd(self, args: list[str]) -> str:
         session = self._require_session()
@@ -310,21 +479,23 @@ class TerminalShell:
 
     def profile_status(self) -> str:
         profile = self.active_profile()
-        return (
-            "Active CLI Codex profile:\n"
-            f"- id: {profile.id}\n"
-            f"- name: {profile.display_name}\n"
-            f"- email: {profile.email}\n"
-            f"- home: {profile.home_dir}"
+        return self.ui.table(
+            "Active Profile",
+            [
+                ("id", profile.id),
+                ("name", profile.display_name),
+                ("email", profile.email),
+                ("home", profile.home_dir),
+            ],
         )
 
     def profile_list(self) -> str:
         active_profile_id = self.store.active_profile_id(CLI_SCOPE_KEY)
-        lines = ["Codex profiles:"]
+        lines = []
         for profile in self.store.list_profiles():
             marker = "*" if profile.id == active_profile_id else " "
             lines.append(f"{marker} {profile.id} | {profile.display_name} | {profile.email}")
-        return "\n".join(lines) if len(lines) > 1 else "No profiles registered yet."
+        return self.ui.box("Codex Profiles", "\n".join(lines)) if lines else "No profiles registered yet."
 
     def profile_switch(self, selector: str) -> str:
         target = self.store.find_profile(selector)
@@ -343,9 +514,13 @@ class TerminalShell:
         session = self._require_session()
         session.profile_id = target.id
         self.store.update(session)
-        return (
-            f"Switched active CLI profile to: {self._profile_label(target)}\n"
-            "Old CLI Codex threads from other profiles were stopped and saved."
+        return self.ui.table(
+            "Profile Switched",
+            [
+                ("Profile", self._profile_label(target)),
+                ("Session", session.id[:8]),
+                ("Saved", "old CLI threads from other profiles"),
+            ],
         )
 
     def model_command(self, args: list[str]) -> str:
@@ -511,34 +686,31 @@ class TerminalShell:
 
 
 class TerminalEventRenderer:
-    """Render Codex JSON events in a compact terminal-friendly format."""
+    """Convert Codex JSON events into compact progress status text."""
 
-    def __init__(self) -> None:
-        self._seen_thread = False
+    def __init__(self, status_callback: Optional[Callable[[str], None]] = None) -> None:
+        self._status_callback = status_callback or (lambda _status: None)
 
     def reset(self) -> None:
-        self._seen_thread = False
+        return None
 
     def render(self, event: dict) -> None:
         event_type = str(event.get("type") or "")
         if event_type == "thread.started":
-            thread_id = event.get("thread_id")
-            if thread_id and not self._seen_thread:
-                print(f"Thread: {thread_id}")
-                self._seen_thread = True
+            self._status_callback("session ready")
             return
         if event_type == "turn.started":
-            print("Turn started.")
+            self._status_callback("thinking")
             return
         if event_type == "turn.failed":
             error = event.get("error")
             if isinstance(error, dict):
-                print(f"Turn failed: {error.get('message') or error}")
+                self._status_callback(str(error.get("message") or "turn failed"))
             else:
-                print("Turn failed.")
+                self._status_callback("turn failed")
             return
         if event_type == "error":
-            print(f"Error: {event.get('message') or event}")
+            self._status_callback(str(event.get("message") or "error"))
             return
 
         item = event.get("item")
@@ -551,9 +723,9 @@ class TerminalEventRenderer:
             return
         label = self._item_label(item_type, item)
         if event_type.endswith(".started") or event_type == "item.started":
-            print(f"- started: {label}")
+            self._status_callback(label)
         elif event_type.endswith(".completed") or event_type == "item.completed":
-            print(f"- completed: {label}")
+            self._status_callback(f"completed {label}")
 
     @staticmethod
     def _item_label(item_type: str, item: dict) -> str:

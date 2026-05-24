@@ -54,7 +54,7 @@ class TerminalShellTests(unittest.TestCase):
 
             response = shell.new_session([str(work)])
 
-            self.assertIn("New CLI session", response)
+            self.assertIn("New Session", response)
             self.assertEqual(shell.session.working_dir, str(work.resolve()))
             self.assertEqual(shell.session.scope_key, "cli:default")
 
@@ -69,7 +69,7 @@ class TerminalShellTests(unittest.TestCase):
 
             response = shell.profile_switch(profile.id)
 
-            self.assertIn("Switched active CLI profile", response)
+            self.assertIn("Profile Switched", response)
             self.assertEqual(shell.active_profile().id, profile.id)
             self.assertEqual(shell.session.profile_id, profile.id)
 

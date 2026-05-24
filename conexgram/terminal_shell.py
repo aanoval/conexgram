@@ -8,8 +8,10 @@ import re
 import shutil
 import subprocess
 import sys
+import termios
 import threading
 import time
+import tty
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -25,26 +27,6 @@ try:
     import readline
 except ImportError:  # pragma: no cover - platform dependent
     readline = None  # type: ignore[assignment]
-
-try:
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.application import run_in_terminal
-    from prompt_toolkit.completion import Completer, Completion
-    from prompt_toolkit.document import Document
-    from prompt_toolkit.formatted_text import StyleAndTextTuples
-    from prompt_toolkit.key_binding import KeyBindings
-    from prompt_toolkit.patch_stdout import patch_stdout
-    from prompt_toolkit.styles import Style
-except ImportError:  # pragma: no cover - optional fallback before dependencies are installed
-    PromptSession = None  # type: ignore[assignment]
-    run_in_terminal = None  # type: ignore[assignment]
-    Completer = object  # type: ignore[assignment,misc]
-    Completion = None  # type: ignore[assignment]
-    Document = object  # type: ignore[assignment,misc]
-    StyleAndTextTuples = list[tuple[str, str]]  # type: ignore[misc,assignment]
-    KeyBindings = None  # type: ignore[assignment]
-    patch_stdout = None  # type: ignore[assignment]
-    Style = None  # type: ignore[assignment]
 
 
 CLI_SCOPE_KEY = "cli:default"
@@ -122,9 +104,6 @@ class TerminalUI:
             + "› "
         )
         return field
-
-    def prompt_fragments(self) -> StyleAndTextTuples:
-        return [("class:input-field", "› ")]
 
     def user_input(self, text: str) -> str:
         if not self.theme.enabled:
@@ -306,10 +285,12 @@ class ProgressSpinner:
         ui: TerminalUI,
         label: str = "Codex working",
         tick_callback: Optional[Callable[[str], None]] = None,
+        line_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.ui = ui
         self.label = label
         self.tick_callback = tick_callback
+        self.line_callback = line_callback
         self.status = "starting"
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -338,14 +319,21 @@ class ProgressSpinner:
         if not self.ui.interactive:
             print(f"- {status}")
             return
+        line = self.ui.dim("- ") + self.ui.accent(status)
+        if self.line_callback is not None:
+            self.line_callback(line)
+            return
         with self._io_lock:
             if self.tick_callback is None:
                 self._clear_line()
-            print(self.ui.dim("- ") + self.ui.accent(status))
+            print(line)
 
     def print_line(self, line: str) -> None:
         if not self.ui.interactive:
             print(line)
+            return
+        if self.line_callback is not None:
+            self.line_callback(line)
             return
         with self._io_lock:
             if self.tick_callback is None:
@@ -492,19 +480,6 @@ class FileChangeTracker:
             return 0
 
 
-class TerminalCompleter(Completer):
-    def __init__(self, shell: "TerminalShell") -> None:
-        self.shell = shell
-
-    def get_completions(self, document: Document, complete_event: object) -> object:
-        if Completion is None:
-            return
-        buffer = document.text_before_cursor
-        text = document.get_word_before_cursor(WORD=True)
-        for option in self.shell._completion_options(buffer, text):
-            yield Completion(option, start_position=-len(text))
-
-
 class TerminalShell:
     """Run Codex turns directly from a terminal without Telegram."""
 
@@ -545,7 +520,10 @@ class TerminalShell:
         self._turn_thread: Optional[threading.Thread] = None
         self._progress_lock = threading.Lock()
         self._progress_text = ""
-        self._prompt_session: object = self._build_prompt_session()
+        self._terminal_lock = threading.RLock()
+        self._tty_prompt_active = False
+        self._tty_progress_active = False
+        self._tty_input_buffer = ""
 
     def run(self, cwd: Optional[Path] = None, resume_selector: Optional[str] = None) -> int:
         working_dir = (cwd or Path.cwd()).expanduser().resolve()
@@ -603,9 +581,11 @@ class TerminalShell:
                 continue
             if not text:
                 continue
-            print(self.ui.user_input(text))
+            self._print_output_line(self.ui.user_input(text))
             if self._is_working() and text.startswith("/") and text.lower() not in {"/exit", "/quit"}:
-                print(self.ui.warn("Codex is working. Wait for this turn to finish before running commands."))
+                self._print_output_line(
+                    self.ui.warn("Codex is working. Wait for this turn to finish before running commands.")
+                )
                 continue
             if text.startswith("/"):
                 try:
@@ -620,70 +600,150 @@ class TerminalShell:
                 continue
             self._start_or_queue_turn(text)
 
-    def _build_prompt_session(self) -> object:
-        if (
-            PromptSession is None
-            or KeyBindings is None
-            or Style is None
-            or not sys.stdin.isatty()
-            or not sys.stdout.isatty()
-        ):
-            return None
-        key_bindings = KeyBindings()
-
-        @key_bindings.add("escape")
-        def _cancel_queue(event: object) -> None:
-            if run_in_terminal is None:
-                return
-            run_in_terminal(self._cancel_queued_turns)
-
-        return PromptSession(
-            completer=TerminalCompleter(self),
-            key_bindings=key_bindings,
-            erase_when_done=True,
-            style=Style.from_dict({
-                "": "bg:#303030 #e8e8e8",
-                "input-field": "bg:#303030 #e8e8e8",
-                "rprompt": "noinherit bg:default fg:#777777",
-                "bottom-toolbar": "noinherit bg:default fg:#36a3ff",
-            }),
-        )
-
     def _read_input(self) -> str:
-        if (
-            self._prompt_session is not None
-            and patch_stdout is not None
-            and self.ui.interactive
-        ):
-            with patch_stdout(raw=True):
-                return self._prompt_session.prompt(  # type: ignore[attr-defined]
-                    self.ui.prompt_fragments(),
-                    rprompt=self._prompt_meta_fragments,
-                    bottom_toolbar=self._progress_toolbar_fragments,
-                    refresh_interval=0.25,
-                )
+        if self.ui.interactive and sys.stdin.isatty():
+            return self._read_tty_input()
         try:
             return input(self._prompt())
         finally:
             self.ui.finish_prompt()
 
-    def _prompt_meta_fragments(self) -> StyleAndTextTuples:
+    def _prompt_meta_text(self) -> str:
         session = self._require_session()
         cwd = self._display_path(Path(session.working_dir))
         model = session.model or self.config.codex.model or "codex default"
         reasoning = session.reasoning_effort or self.config.codex.reasoning_effort or "default"
-        return [("class:rprompt", f"{model} {reasoning} · {cwd}")]
-
-    def _progress_toolbar_fragments(self) -> StyleAndTextTuples:
-        with self._progress_lock:
-            progress_text = self._progress_text
-        if not progress_text:
-            return []
-        return [("class:bottom-toolbar", f" {progress_text}")]
+        return f"{model} {reasoning} · {cwd}"
 
     def _set_progress_text(self, text: str) -> None:
         with self._progress_lock:
             self._progress_text = text
+        self._render_progress(text)
+
+    def _read_tty_input(self) -> str:
+        old_settings = termios.tcgetattr(sys.stdin)
+        with self._terminal_lock:
+            self._tty_prompt_active = True
+            self._tty_input_buffer = ""
+            self._redraw_prompt_locked()
+        try:
+            tty.setraw(sys.stdin.fileno())
+            while True:
+                char = sys.stdin.read(1)
+                if char in {"\r", "\n"}:
+                    text = self._tty_input_buffer
+                    with self._terminal_lock:
+                        self._clear_prompt_locked()
+                        self._tty_prompt_active = False
+                        self._tty_input_buffer = ""
+                    return text
+                if char == "\x03":
+                    with self._terminal_lock:
+                        self._clear_prompt_locked()
+                        self._tty_prompt_active = False
+                        self._tty_input_buffer = ""
+                    raise KeyboardInterrupt
+                if char == "\x04":
+                    with self._terminal_lock:
+                        self._clear_prompt_locked()
+                        self._tty_prompt_active = False
+                        self._tty_input_buffer = ""
+                    raise EOFError
+                if char == "\x1b":
+                    self._cancel_queued_turns()
+                    continue
+                if char in {"\x7f", "\b"}:
+                    with self._terminal_lock:
+                        self._tty_input_buffer = self._tty_input_buffer[:-1]
+                        self._redraw_prompt_locked()
+                    continue
+                if char == "\t":
+                    with self._terminal_lock:
+                        completed = self._complete_tty_buffer(self._tty_input_buffer)
+                        if completed is not None:
+                            self._tty_input_buffer = completed
+                        self._redraw_prompt_locked()
+                    continue
+                if char.isprintable():
+                    with self._terminal_lock:
+                        self._tty_input_buffer += char
+                        self._redraw_prompt_locked()
+        finally:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+
+    def _complete_tty_buffer(self, buffer: str) -> Optional[str]:
+        if not buffer.startswith("/"):
+            return None
+        text = buffer.rsplit(" ", 1)[-1] if " " in buffer else buffer
+        options = self._completion_options(buffer, text)
+        if len(options) == 1:
+            if " " in buffer:
+                return buffer.rsplit(" ", 1)[0] + " " + options[0]
+            return options[0]
+        return None
+
+    def _render_progress(self, text: str) -> None:
+        if not self.ui.interactive:
+            return
+        with self._terminal_lock:
+            if self._tty_prompt_active:
+                self._clear_prompt_locked()
+            if self._tty_progress_active:
+                sys.stdout.write("\033[1A\r\033[2K")
+            if text:
+                width = shutil.get_terminal_size((88, 24)).columns - 1
+                sys.stdout.write(self.ui.accent(text[:width]) + "\n")
+                self._tty_progress_active = True
+            else:
+                self._tty_progress_active = False
+            if self._tty_prompt_active:
+                self._redraw_prompt_locked()
+            sys.stdout.flush()
+
+    def _print_output_line(self, line: str) -> None:
+        if not self.ui.interactive:
+            print(line)
+            return
+        with self._terminal_lock:
+            if self._tty_prompt_active:
+                self._clear_prompt_locked()
+            progress_text = self._progress_text
+            if self._tty_progress_active:
+                sys.stdout.write("\033[1A\r\033[2K")
+            print(line)
+            if progress_text:
+                width = shutil.get_terminal_size((88, 24)).columns - 1
+                sys.stdout.write(self.ui.accent(progress_text[:width]) + "\n")
+                self._tty_progress_active = True
+            else:
+                self._tty_progress_active = False
+            if self._tty_prompt_active:
+                self._redraw_prompt_locked()
+            sys.stdout.flush()
+
+    def _clear_prompt_locked(self) -> None:
+        sys.stdout.write("\r\033[2K")
+        sys.stdout.write("\033[1B\r\033[2K")
+        sys.stdout.write("\033[1A\r")
+
+    def _redraw_prompt_locked(self) -> None:
+        width = max(24, shutil.get_terminal_size((88, 24)).columns - 1)
+        buffer = self._tty_input_buffer
+        visible = ("› " + buffer)[:width]
+        padding = " " * max(0, width - self.ui._visible_len(visible))
+        field = (
+            TerminalTheme.INPUT_BG
+            + TerminalTheme.INPUT_FG
+            + visible
+            + padding
+            + TerminalTheme.RESET
+        )
+        meta = "  " + self._prompt_meta_text()
+        sys.stdout.write("\r\033[2K" + field)
+        sys.stdout.write("\n\r\033[2K" + self.ui.dim(meta[:width]))
+        sys.stdout.write("\033[1A\r")
+        sys.stdout.write(TerminalTheme.INPUT_BG + TerminalTheme.INPUT_FG + visible + TerminalTheme.RESET)
+        sys.stdout.flush()
 
     def run_codex_args(self, args: list[str], cwd: Optional[Path] = None) -> int:
         if not self.active_profile_has_auth():
@@ -735,7 +795,7 @@ class TerminalShell:
         with self._turn_lock:
             if self._turn_thread is not None and self._turn_thread.is_alive():
                 self._turn_queue.append(text)
-                print(
+                self._print_output_line(
                     self.ui.dim(
                         f"Queued {len(self._turn_queue)} pending message(s). "
                         "Ctrl-C cancels the queue."
@@ -756,7 +816,9 @@ class TerminalShell:
             with self._turn_lock:
                 if self._turn_queue:
                     text = self._turn_queue.pop(0)
-                    print(self.ui.dim(f"Running queued message. {len(self._turn_queue)} still pending."))
+                    self._print_output_line(
+                        self.ui.dim(f"Running queued message. {len(self._turn_queue)} still pending.")
+                    )
                 else:
                     self._turn_thread = None
                     text = None
@@ -770,8 +832,8 @@ class TerminalShell:
             queued = len(self._turn_queue)
             self._turn_queue.clear()
         if queued:
-            print()
-            print(self.ui.warn(f"Canceled {queued} queued message(s)."))
+            self._print_output_line("")
+            self._print_output_line(self.ui.warn(f"Canceled {queued} queued message(s)."))
             return True
         return False
 
@@ -795,7 +857,11 @@ class TerminalShell:
         profile_home = Path(self.active_profile().home_dir)
         change_tracker = FileChangeTracker(Path(session.working_dir))
         before_changes = change_tracker.snapshot()
-        progress = ProgressSpinner(self.ui, tick_callback=self._set_progress_text)
+        progress = ProgressSpinner(
+            self.ui,
+            tick_callback=self._set_progress_text,
+            line_callback=self._print_output_line,
+        )
         native_changes: set[tuple[str, str]] = set()
 
         def show_native_file_change(change: FileChange) -> None:
@@ -832,18 +898,18 @@ class TerminalShell:
         self.store.update(session)
 
         if result.return_code != 0:
-            print(self.ui.error(f"Codex exited with code {result.return_code}."))
+            self._print_output_line(self.ui.error(f"Codex exited with code {result.return_code}."))
         file_changes = change_tracker.changes_since(before_changes)
         if file_changes:
-            print()
+            self._print_output_line("")
             for change in file_changes:
-                print(self.ui.file_change(change))
+                self._print_output_line(self.ui.file_change(change))
         if result.text.strip():
-            print()
-            print(self.ui.highlight_response(result.text.strip()))
-            print()
-            print(self.ui.divider(f"Worked for {self.ui.format_duration(worked_seconds)}"))
-            print()
+            self._print_output_line("")
+            self._print_output_line(self.ui.highlight_response(result.text.strip()))
+            self._print_output_line("")
+            self._print_output_line(self.ui.divider(f"Worked for {self.ui.format_duration(worked_seconds)}"))
+            self._print_output_line("")
 
     def _normalize_file_change(
         self,

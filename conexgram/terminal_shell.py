@@ -60,18 +60,28 @@ class TerminalTheme:
 class TerminalUI:
     def __init__(self) -> None:
         self.theme = TerminalTheme()
+        self._prompt_tail_lines = 0
 
     @property
     def interactive(self) -> bool:
         return sys.stdout.isatty()
 
-    def prompt(self, cwd: str, profile_id: str, mode: str) -> str:
+    def prompt(self, cwd: str, profile_id: str, mode: str, model: str, reasoning: str) -> str:
         if not self.theme.enabled:
             return "› "
         width = max(24, shutil.get_terminal_size((88, 24)).columns - 1)
-        sys.stdout.write(TerminalTheme.INPUT_BG + " " * width + TerminalTheme.RESET + "\n")
-        sys.stdout.write(TerminalTheme.INPUT_BG + " " * width + TerminalTheme.RESET + "\r")
+        meta = f"  {model} {reasoning} · {cwd}"
+        top = TerminalTheme.INPUT_BG + " " * width + TerminalTheme.RESET
+        middle = TerminalTheme.INPUT_BG + " " * width + TerminalTheme.RESET
+        bottom = TerminalTheme.INPUT_BG + " " * width + TerminalTheme.RESET
+        sys.stdout.write(top + "\n")
+        sys.stdout.write(middle + "\n")
+        sys.stdout.write(bottom + "\n")
+        sys.stdout.write("\n")
+        sys.stdout.write(self.dim(meta[:width]) + "\n")
+        sys.stdout.write("\033[4A\r")
         sys.stdout.flush()
+        self._prompt_tail_lines = 3
         field = (
             "\001"
             + TerminalTheme.INPUT_BG
@@ -83,7 +93,11 @@ class TerminalUI:
 
     def finish_prompt(self) -> None:
         if self.theme.enabled:
+            tail_lines = self._prompt_tail_lines
+            self._prompt_tail_lines = 0
             sys.stdout.write(TerminalTheme.RESET)
+            if tail_lines:
+                sys.stdout.write(f"\033[{tail_lines}B\r")
             sys.stdout.flush()
 
     def box(self, title: str, body: str) -> str:
@@ -387,9 +401,11 @@ class TerminalShell:
 
     def _prompt(self) -> str:
         session = self._require_session()
-        cwd = Path(session.working_dir).name or session.working_dir
+        cwd = self._display_path(Path(session.working_dir))
+        model = session.model or self.config.codex.model or "codex default"
+        reasoning = session.reasoning_effort or self.config.codex.reasoning_effort or "default"
         profile = self.active_profile()
-        return self.ui.prompt(str(cwd), profile.id, session.mode)
+        return self.ui.prompt(str(cwd), profile.id, session.mode, str(model), str(reasoning))
 
     def _create_session(self, working_dir: Path) -> Session:
         return self.store.create(
@@ -807,6 +823,16 @@ class TerminalShell:
     @staticmethod
     def _profile_label(profile: CodexProfile) -> str:
         return f"{profile.display_name} <{profile.email}> [{profile.id}]"
+
+    @staticmethod
+    def _display_path(path: Path) -> str:
+        try:
+            home = Path.home().resolve()
+            resolved = path.expanduser().resolve()
+            relative = resolved.relative_to(home)
+            return "~/" + str(relative)
+        except Exception:
+            return str(path)
 
     @staticmethod
     def _profile_env(profile_home: Path) -> dict[str, str]:

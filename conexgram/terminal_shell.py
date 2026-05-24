@@ -109,7 +109,9 @@ class TerminalUI:
             self._prompt_tail_lines = 0
             sys.stdout.write(TerminalTheme.RESET)
             if tail_lines:
-                sys.stdout.write(f"\033[{tail_lines}B\r")
+                for _ in range(tail_lines):
+                    sys.stdout.write("\033[2K")
+                    sys.stdout.write("\033[1B\r")
             sys.stdout.flush()
 
     def box(self, title: str, body: str) -> str:
@@ -218,8 +220,8 @@ class TerminalUI:
             line = "─" * max(24, width)
             return self.dim(line)
         label_text = f" {label} "
-        side = max(3, (width - len(label_text)) // 2)
-        line = "─" * side + label_text + "─" * max(3, width - side - len(label_text))
+        prefix = "────"
+        line = prefix + label_text + "─" * max(3, width - len(prefix) - len(label_text))
         return self.dim(line[:width])
 
     @staticmethod
@@ -607,7 +609,9 @@ class TerminalShell:
         if result.text.strip():
             print()
             print(self.ui.highlight_response(result.text.strip()))
+            print()
             print(self.ui.divider(f"Worked for {self.ui.format_duration(worked_seconds)}"))
+            print()
 
     def _handle_command(self, text: str) -> bool:
         parts = text.split()

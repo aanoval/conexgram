@@ -293,6 +293,14 @@ class ProgressSpinner:
             self._clear_line()
             print(self.ui.dim("- ") + self.ui.accent(status))
 
+    def print_line(self, line: str) -> None:
+        if not self.ui.interactive:
+            print(line)
+            return
+        with self._io_lock:
+            self._clear_line()
+            print(line)
+
     def stop(self) -> None:
         if not self.ui.interactive:
             return
@@ -650,7 +658,24 @@ class TerminalShell:
         change_tracker = FileChangeTracker(Path(session.working_dir))
         before_changes = change_tracker.snapshot()
         progress = ProgressSpinner(self.ui)
-        renderer = TerminalEventRenderer(status_callback=progress.update)
+        native_changes: set[tuple[str, str]] = set()
+
+        def show_native_file_change(change: FileChange) -> None:
+            normalized = self._normalize_file_change(
+                change,
+                working_dir=Path(session.working_dir),
+                git_root=change_tracker.git_root,
+            )
+            key = (normalized.kind, normalized.path)
+            if key in native_changes:
+                return
+            native_changes.add(key)
+            progress.print_line(self.ui.file_change(normalized))
+
+        renderer = TerminalEventRenderer(
+            status_callback=progress.update,
+            file_change_callback=show_native_file_change,
+        )
         progress.start()
         try:
             result = self.runner.run_turn(
@@ -681,6 +706,41 @@ class TerminalShell:
             print()
             print(self.ui.divider(f"Worked for {self.ui.format_duration(worked_seconds)}"))
             print()
+
+    def _normalize_file_change(
+        self,
+        change: FileChange,
+        working_dir: Path,
+        git_root: Optional[Path],
+    ) -> FileChange:
+        return FileChange(
+            kind=change.kind,
+            path=self._display_change_path(change.path, working_dir, git_root),
+            added=change.added,
+            deleted=change.deleted,
+        )
+
+    def _display_change_path(
+        self,
+        path_text: str,
+        working_dir: Path,
+        git_root: Optional[Path],
+    ) -> str:
+        path = Path(path_text).expanduser()
+        if not path.is_absolute():
+            return path_text
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        for base in [git_root, working_dir]:
+            if base is None:
+                continue
+            try:
+                return str(resolved.relative_to(base.expanduser().resolve()))
+            except ValueError:
+                continue
+        return self._display_path(resolved)
 
     def _handle_command(self, text: str) -> bool:
         parts = text.split()
@@ -1092,8 +1152,13 @@ class TerminalShell:
 class TerminalEventRenderer:
     """Convert Codex JSON events into compact progress status text."""
 
-    def __init__(self, status_callback: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(
+        self,
+        status_callback: Optional[Callable[[str], None]] = None,
+        file_change_callback: Optional[Callable[[FileChange], None]] = None,
+    ) -> None:
         self._status_callback = status_callback or (lambda _status: None)
+        self._file_change_callback = file_change_callback or (lambda _change: None)
 
     def reset(self) -> None:
         return None
@@ -1123,11 +1188,36 @@ class TerminalEventRenderer:
         item_type = str(item.get("type") or "item")
         if item_type == "agent_message":
             return
+        if item_type == "file_change":
+            if event_type.endswith(".completed") or event_type == "item.completed":
+                for change in self._file_changes(item):
+                    self._file_change_callback(change)
+            return
         label = self._item_label(item_type, item)
         if event_type.endswith(".started") or event_type == "item.started":
             self._status_callback(label)
         elif event_type.endswith(".completed") or event_type == "item.completed":
             self._status_callback(f"completed {label}")
+
+    @staticmethod
+    def _file_changes(item: dict) -> list[FileChange]:
+        raw_changes = item.get("changes")
+        if not isinstance(raw_changes, list):
+            return []
+        changes: list[FileChange] = []
+        for raw_change in raw_changes:
+            if not isinstance(raw_change, dict):
+                continue
+            path = raw_change.get("path")
+            if not isinstance(path, str) or not path.strip():
+                continue
+            kind = str(raw_change.get("kind") or "edit").strip().lower()
+            if kind == "update":
+                kind = "edit"
+            if kind not in {"add", "edit", "delete"}:
+                kind = "edit"
+            changes.append(FileChange(kind=kind, path=path.strip()))
+        return changes
 
     @staticmethod
     def _item_label(item_type: str, item: dict) -> str:

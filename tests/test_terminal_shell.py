@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from conexgram.config import AppConfig, CodexConfig, GatewayConfig, TelegramConfig
-from conexgram.terminal_shell import FileChangeTracker, TerminalShell
+from conexgram.terminal_shell import FileChangeTracker, TerminalEventRenderer, TerminalShell
 
 
 def make_fake_auth(path: Path, email: str, name: str) -> None:
@@ -102,6 +102,29 @@ class TerminalShellTests(unittest.TestCase):
             self.assertEqual(changes["tracked.txt"].added, 1)
             self.assertEqual(changes["deleted.txt"].kind, "delete")
             self.assertEqual(changes["deleted.txt"].deleted, 1)
+
+    def test_terminal_event_renderer_emits_native_file_changes(self):
+        seen = []
+        renderer = TerminalEventRenderer(file_change_callback=seen.append)
+
+        renderer.render({
+            "type": "item.completed",
+            "item": {
+                "type": "file_change",
+                "changes": [
+                    {"path": "/tmp/new.txt", "kind": "add"},
+                    {"path": "/tmp/edited.txt", "kind": "update"},
+                    {"path": "/tmp/deleted.txt", "kind": "delete"},
+                ],
+            },
+        })
+
+        self.assertEqual([item.kind for item in seen], ["add", "edit", "delete"])
+        self.assertEqual([item.path for item in seen], [
+            "/tmp/new.txt",
+            "/tmp/edited.txt",
+            "/tmp/deleted.txt",
+        ])
 
 
 if __name__ == "__main__":

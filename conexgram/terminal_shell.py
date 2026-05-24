@@ -39,6 +39,8 @@ class TerminalTheme:
     RED = "\033[31m"
     DIM = "\033[2m"
     BOLD = "\033[1m"
+    INPUT_BG = "\033[48;5;250m"
+    INPUT_FG = "\033[38;5;16m"
 
     def __init__(self) -> None:
         self.enabled = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
@@ -63,11 +65,22 @@ class TerminalUI:
         return sys.stdout.isatty()
 
     def prompt(self, cwd: str, profile_id: str, mode: str) -> str:
-        prefix = self.theme.prompt_color("conexgram", TerminalTheme.CYAN)
-        cwd_text = self.theme.prompt_color(cwd, TerminalTheme.GREEN)
-        profile = self.theme.prompt_color(profile_id, TerminalTheme.YELLOW)
-        mode_text = self.theme.prompt_color(mode, TerminalTheme.DIM)
-        return f"{prefix} {cwd_text} {profile} {mode_text}> "
+        if not self.theme.enabled:
+            return "you> "
+        label = self.theme.prompt_color("you", TerminalTheme.DIM)
+        field = (
+            "\001"
+            + TerminalTheme.INPUT_BG
+            + TerminalTheme.INPUT_FG
+            + "\002"
+            + "  "
+        )
+        return f"{label}\n{field}"
+
+    def finish_prompt(self) -> None:
+        if self.theme.enabled:
+            sys.stdout.write(TerminalTheme.RESET)
+            sys.stdout.flush()
 
     def box(self, title: str, body: str) -> str:
         width = self._width(body, title)
@@ -309,10 +322,13 @@ class TerminalShell:
         while True:
             try:
                 text = input(self._prompt())
+                self.ui.finish_prompt()
             except EOFError:
+                self.ui.finish_prompt()
                 print()
                 return 0
             except KeyboardInterrupt:
+                self.ui.finish_prompt()
                 print("\n" + self.ui.warn("Interrupted. Type /exit to quit."))
                 continue
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -100,6 +101,57 @@ class TerminalUI:
     def accent(self, text: str) -> str:
         return self.theme.color(text, TerminalTheme.CYAN)
 
+    def dim(self, text: str) -> str:
+        return self.theme.color(text, TerminalTheme.DIM)
+
+    def highlight_response(self, text: str) -> str:
+        if not self.theme.enabled:
+            return text
+        highlighted = text
+        highlighted = re.sub(
+            r"\b(error|failed|failure|exception|rejected|blocked)\b",
+            lambda item: self.error(item.group(0)),
+            highlighted,
+            flags=re.IGNORECASE,
+        )
+        highlighted = re.sub(
+            r"\b(warning|warn|caution|risk|risky)\b",
+            lambda item: self.warn(item.group(0)),
+            highlighted,
+            flags=re.IGNORECASE,
+        )
+        highlighted = re.sub(
+            r"\b(success|succeeded|done|completed|passed|ok|valid)\b",
+            lambda item: self.ok(item.group(0)),
+            highlighted,
+            flags=re.IGNORECASE,
+        )
+        highlighted = re.sub(
+            r"`([^`]+)`",
+            lambda item: self.accent(item.group(0)),
+            highlighted,
+        )
+        return highlighted
+
+    def divider(self, label: str = "") -> str:
+        width = shutil.get_terminal_size((88, 24)).columns
+        if not label:
+            line = "-" * max(24, width)
+            return self.dim(line)
+        label_text = f" {label} "
+        side = max(3, (width - len(label_text)) // 2)
+        line = "-" * side + label_text + "-" * max(3, width - side - len(label_text))
+        return self.dim(line[:width])
+
+    @staticmethod
+    def format_duration(seconds: float) -> str:
+        total = max(0, int(seconds))
+        minutes, secs = divmod(total, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
+
     def _width(self, body: str, title: str) -> int:
         terminal_width = shutil.get_terminal_size((88, 24)).columns
         max_line = max([len(line) for line in body.splitlines()] + [len(title) + 4, 48])
@@ -131,6 +183,8 @@ class ProgressSpinner:
         self._thread: Optional[threading.Thread] = None
         self._started_at = 0.0
         self._lock = threading.Lock()
+        self._io_lock = threading.Lock()
+        self._last_log = ""
 
     def start(self) -> None:
         self._started_at = time.monotonic()
@@ -142,11 +196,19 @@ class ProgressSpinner:
         self._thread.start()
 
     def update(self, status: str) -> None:
+        self.log(status)
+
+    def log(self, status: str) -> None:
         status = status.strip()
-        if not status:
+        if not status or status == self._last_log:
             return
-        with self._lock:
-            self.status = status
+        self._last_log = status
+        if not self.ui.interactive:
+            print(f"- {status}")
+            return
+        with self._io_lock:
+            self._clear_line()
+            print(self.ui.dim("- ") + self.ui.accent(status))
 
     def stop(self) -> None:
         if not self.ui.interactive:
@@ -154,7 +216,13 @@ class ProgressSpinner:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=1)
-        self._clear_line()
+        with self._io_lock:
+            self._clear_line()
+
+    def elapsed_seconds(self) -> float:
+        if not self._started_at:
+            return 0.0
+        return time.monotonic() - self._started_at
 
     def _run(self) -> None:
         index = 0
@@ -165,9 +233,10 @@ class ProgressSpinner:
                 status = self.status
             frame = self.FRAMES[index % len(self.FRAMES)]
             index += 1
-            line = f"{frame} {self.label} {minutes:02d}:{seconds:02d}  {status}"
-            sys.stdout.write("\r" + self.ui.accent(line[: shutil.get_terminal_size((88, 24)).columns - 1]))
-            sys.stdout.flush()
+            line = f"{frame} {self.label} {minutes:02d}:{seconds:02d}"
+            with self._io_lock:
+                sys.stdout.write("\r" + self.ui.accent(line[: shutil.get_terminal_size((88, 24)).columns - 1]))
+                sys.stdout.flush()
             time.sleep(0.25)
 
     @staticmethod
@@ -324,6 +393,7 @@ class TerminalShell:
             )
         finally:
             progress.stop()
+        worked_seconds = progress.elapsed_seconds()
         if result.thread_id and not session.codex_thread_id:
             session.codex_thread_id = result.thread_id
         session.turn_count += 1
@@ -333,7 +403,9 @@ class TerminalShell:
         if result.return_code != 0:
             print(self.ui.error(f"Codex exited with code {result.return_code}."))
         if result.text.strip():
-            print(self.ui.box("Codex", result.text.strip()))
+            print()
+            print(self.ui.highlight_response(result.text.strip()))
+            print(self.ui.divider(f"worked {self.ui.format_duration(worked_seconds)}"))
 
     def _handle_command(self, text: str) -> bool:
         parts = text.split()
@@ -697,10 +769,8 @@ class TerminalEventRenderer:
     def render(self, event: dict) -> None:
         event_type = str(event.get("type") or "")
         if event_type == "thread.started":
-            self._status_callback("session ready")
             return
         if event_type == "turn.started":
-            self._status_callback("thinking")
             return
         if event_type == "turn.failed":
             error = event.get("error")

@@ -621,10 +621,11 @@ class TerminalShell:
         return PromptSession(
             completer=TerminalCompleter(self),
             key_bindings=key_bindings,
+            erase_when_done=True,
             style=Style.from_dict({
                 "": "bg:#303030 #e8e8e8",
                 "input-field": "bg:#303030 #e8e8e8",
-                "bottom-toolbar": "nobg fg:#777777",
+                "bottom-toolbar": "bg:default fg:#777777",
             }),
         )
 
@@ -638,7 +639,6 @@ class TerminalShell:
                 return self._prompt_session.prompt(  # type: ignore[attr-defined]
                     self.ui.prompt_fragments(),
                     bottom_toolbar=self._prompt_meta_fragments,
-                    erase_when_done=True,
                 )
         try:
             return input(self._prompt())

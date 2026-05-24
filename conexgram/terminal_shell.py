@@ -33,6 +33,7 @@ CLI_USER_ID = 0
 
 class TerminalTheme:
     RESET = "\033[0m"
+    BLUE = "\033[34m"
     CYAN = "\033[36m"
     GREEN = "\033[32m"
     YELLOW = "\033[33m"
@@ -116,6 +117,9 @@ class TerminalUI:
 
     def accent(self, text: str) -> str:
         return self.theme.color(text, TerminalTheme.CYAN)
+
+    def command(self, text: str) -> str:
+        return self.theme.color(text, TerminalTheme.BLUE)
 
     def dim(self, text: str) -> str:
         return self.theme.color(text, TerminalTheme.DIM)
@@ -300,14 +304,22 @@ class TerminalShell:
         self.renderer = TerminalEventRenderer()
         self.session: Optional[Session] = None
 
-    def run(self, cwd: Optional[Path] = None) -> int:
+    def run(self, cwd: Optional[Path] = None, resume_selector: Optional[str] = None) -> int:
         working_dir = (cwd or Path.cwd()).expanduser().resolve()
         if not working_dir.exists() or not working_dir.is_dir():
             print(f"Working directory not found: {working_dir}", file=sys.stderr)
             return 1
 
         self._install_completer()
-        self.session = self._create_session(working_dir)
+        if resume_selector:
+            session = self.store.find_for_scope(CLI_SCOPE_KEY, resume_selector)
+            if session is None:
+                print(f"Conexgram CLI session not found: {resume_selector}", file=sys.stderr)
+                return 1
+            self.store.set_active(CLI_SCOPE_KEY, session.id)
+            self.session = session
+        else:
+            self.session = self._create_session(working_dir)
         profile = self.active_profile()
         print(
             self.ui.table(
@@ -320,7 +332,7 @@ class TerminalShell:
                 ],
             )
         )
-        print(self.ui.accent("Type /help for commands, /exit to quit."))
+        print(self.ui.accent("Type /help for commands, Ctrl-C or /exit to quit."))
         if not self.active_profile_has_auth():
             print(self.ui.warn(self.codex_not_ready_message()))
 
@@ -331,11 +343,13 @@ class TerminalShell:
             except EOFError:
                 self.ui.finish_prompt()
                 print()
+                self.print_exit_summary()
                 return 0
             except KeyboardInterrupt:
                 self.ui.finish_prompt()
-                print("\n" + self.ui.warn("Interrupted. Type /exit to quit."))
-                continue
+                print()
+                self.print_exit_summary()
+                return 0
 
             text = text.strip()
             if not text:
@@ -347,6 +361,7 @@ class TerminalShell:
                     print(self.ui.error(f"Command error: {exc}"), file=sys.stderr)
                     should_continue = True
                 if not should_continue:
+                    self.print_exit_summary()
                     return 0
                 continue
             self._run_codex_turn(text)
@@ -485,9 +500,56 @@ class TerminalShell:
             "/model [name|default] - show or set model for this session\n"
             "/reasoning default|low|medium|high|xhigh - set reasoning effort\n"
             "/mode safe|workspace|full - set execution mode\n"
-            "/exit - leave the shell\n\n"
+            "/exit - leave the shell and print resume info\n\n"
             "Any non-command text is sent to the active Codex session."
         )
+
+    def print_exit_summary(self) -> None:
+        session = self._require_session()
+        usage = self._session_token_usage(session)
+        resume_command = f"conexgram resume {session.id}"
+        print()
+        print(
+            "Token usage: "
+            f"total={self._format_number(usage['total'])} "
+            f"input={self._format_number(usage['input'])} "
+            f"(+ {self._format_number(usage['cached'])} cached) "
+            f"output={self._format_number(usage['output'])} "
+            f"(reasoning {self._format_number(usage['reasoning'])})"
+        )
+        print(
+            "To continue this session, run "
+            + self.ui.command(resume_command)
+        )
+
+    def _session_token_usage(self, session: Session) -> dict[str, int]:
+        usage = {"input": 0, "cached": 0, "output": 0, "reasoning": 0, "total": 0}
+        session_logs = self.config.gateway.state_dir / "logs" / session.id
+        if not session_logs.exists():
+            return usage
+        for path in sorted(session_logs.glob("turn-*.jsonl")):
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                raw_usage = event.get("usage") if isinstance(event, dict) else None
+                if not isinstance(raw_usage, dict):
+                    continue
+                usage["input"] += int(raw_usage.get("input_tokens") or 0)
+                usage["cached"] += int(raw_usage.get("cached_input_tokens") or 0)
+                usage["output"] += int(raw_usage.get("output_tokens") or 0)
+                usage["reasoning"] += int(raw_usage.get("reasoning_output_tokens") or 0)
+        usage["total"] = usage["input"] + usage["output"]
+        return usage
+
+    @staticmethod
+    def _format_number(value: int) -> str:
+        return f"{value:,}".replace(",", ".")
 
     def status_text(self) -> str:
         session = self._require_session()

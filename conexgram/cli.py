@@ -31,6 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
     shell_parser = subparsers.add_parser("shell", help="Run the interactive Conexgram terminal shell.")
     shell_parser.add_argument("--cwd", default="", help="Working directory for the new CLI session.")
 
+    resume_parser = subparsers.add_parser("resume", help="Resume a Conexgram CLI session.")
+    resume_parser.add_argument("session", help="Session id or prefix from a previous Conexgram CLI shell.")
+
     codex_parser = subparsers.add_parser(
         "codex",
         add_help=False,
@@ -90,7 +93,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if command in {"doctor", "install-service"} and bool(getattr(args, "fix", False)):
         _doctor_fix_dirs(config_path)
 
-    if command in {"run", "shell", "codex"}:
+    if command in {"run", "shell", "codex", "resume"}:
         config_loaded = False
         attempted_onboarding = False
         while not config_loaded:
@@ -159,6 +162,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         cwd_arg = str(getattr(args, "cwd", "") or "").strip()
         cwd = Path(cwd_arg).expanduser().resolve() if cwd_arg else None
         return TerminalShell(config).run(cwd=cwd)
+
+    if command == "resume":
+        return TerminalShell(config).run(resume_selector=str(getattr(args, "session", "")))
 
     if command == "codex":
         return TerminalShell(config).run_codex_args(list(getattr(args, "codex_args", []) or []))

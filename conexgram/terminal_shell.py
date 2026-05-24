@@ -236,6 +236,13 @@ class TerminalUI:
         )
         return highlighted
 
+    def response_text(self, text: str) -> str:
+        highlighted = self.highlight_response(text.strip())
+        if not highlighted:
+            return ""
+        lines = highlighted.splitlines()
+        return "\n".join(f"  {line.lstrip()}" if line.strip() else "" for line in lines)
+
     def divider(self, label: str = "") -> str:
         width = shutil.get_terminal_size((88, 24)).columns
         if not label:
@@ -705,6 +712,7 @@ class TerminalShell:
             print(line)
             return
         with self._terminal_lock:
+            sys.stdout.write("\r")
             if self._tty_prompt_active:
                 self._clear_prompt_locked()
             progress_text = self._progress_text
@@ -906,7 +914,7 @@ class TerminalShell:
                 self._print_output_line(self.ui.file_change(change))
         if result.text.strip():
             self._print_output_line("")
-            self._print_output_line(self.ui.highlight_response(result.text.strip()))
+            self._print_output_line(self.ui.response_text(result.text))
             self._print_output_line("")
             self._print_output_line(self.ui.divider(f"Worked for {self.ui.format_duration(worked_seconds)}"))
             self._print_output_line("")

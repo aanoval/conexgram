@@ -76,6 +76,24 @@ class CodexRunnerTests(unittest.TestCase):
             self.assertIn("CONEXGRAM_SEND_FILE:", prompt)
             self.assertIn("User message:\nsend this file", prompt)
 
+    def test_terminal_prompt_excludes_telegram_gateway_protocol(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = CodexRunner(CodexConfig(binary="codex", default_working_dir=Path(tmp)), Path(tmp) / "logs")
+            session = Session(
+                id="s1",
+                scope_key="cli:default",
+                chat_id=0,
+                user_id=0,
+                working_dir=tmp,
+                codex_thread_id="thread-1",
+            )
+
+            prompt = runner._build_prompt(session, "halo", prompt_mode="terminal")
+
+            self.assertEqual(prompt, "User message:\nhalo\n")
+            self.assertNotIn("CONEXGRAM_SEND_FILE:", prompt)
+            self.assertNotIn("Telegram-controlled", prompt)
+
     def test_run_turn_emits_json_events_to_callback(self):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)

@@ -895,6 +895,7 @@ class TerminalShell:
                 text,
                 profile_home=profile_home,
                 event_callback=renderer.render,
+                prompt_mode="terminal",
             )
         finally:
             progress.stop()

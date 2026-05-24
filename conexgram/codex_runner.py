@@ -50,6 +50,7 @@ class CodexRunner:
         user_text: str,
         profile_home: Optional[Path] = None,
         event_callback: Optional[Callable[[dict], None]] = None,
+        prompt_mode: str = "telegram",
     ) -> CodexTurnResult:
         working_dir = Path(session.working_dir).expanduser().resolve()
         ensure_dir(self.logs_dir / session.id)
@@ -57,7 +58,7 @@ class CodexRunner:
         raw_log_path = self.logs_dir / session.id / f"turn-{stamp}.jsonl"
         final_message_path = self.logs_dir / session.id / f"turn-{stamp}.final.txt"
 
-        prompt = self._build_prompt(session, user_text)
+        prompt = self._build_prompt(session, user_text, prompt_mode=prompt_mode)
         command = self._build_command(session, final_message_path)
         LOG.info("Running Codex: %s", " ".join(command))
 
@@ -207,7 +208,10 @@ class CodexRunner:
         ensure_dir(Path(profile) / ".cache")
         return env
 
-    def _build_prompt(self, session: Session, user_text: str) -> str:
+    def _build_prompt(self, session: Session, user_text: str, prompt_mode: str = "telegram") -> str:
+        if prompt_mode == "terminal":
+            return self._terminal_prompt(user_text)
+
         tool_prompt = self._gateway_tool_prompt()
         if session.codex_thread_id:
             return f"{tool_prompt}\n\nUser message:\n{user_text.strip()}\n"
@@ -231,6 +235,10 @@ class CodexRunner:
         )
         parts.append("User message:\n" + user_text.strip())
         return "\n\n".join(parts) + "\n"
+
+    @staticmethod
+    def _terminal_prompt(user_text: str) -> str:
+        return "User message:\n" + user_text.strip() + "\n"
 
     @staticmethod
     def _gateway_tool_prompt() -> str:

@@ -359,13 +359,16 @@ class ProgressSpinner:
         return time.monotonic() - self._started_at
 
     def _run(self) -> None:
+        index = 0
         last_printed_second = -1
         while not self._stop.is_set():
             elapsed = int(time.monotonic() - self._started_at)
             minutes, seconds = divmod(elapsed, 60)
-            if elapsed != 0 and elapsed % 5 == 0 and elapsed != last_printed_second:
+            if elapsed != last_printed_second:
                 last_printed_second = elapsed
-                line = f"- {self.label} {minutes:02d}:{seconds:02d}"
+                frame = self.FRAMES[index % len(self.FRAMES)]
+                index += 1
+                line = f"{frame} {self.label} {minutes:02d}:{seconds:02d}"
                 with self._io_lock:
                     print(self.ui.accent(line[: shutil.get_terminal_size((88, 24)).columns - 1]))
             time.sleep(0.25)
@@ -625,7 +628,7 @@ class TerminalShell:
             style=Style.from_dict({
                 "": "bg:#303030 #e8e8e8",
                 "input-field": "bg:#303030 #e8e8e8",
-                "bottom-toolbar": "bg:default fg:#777777",
+                "bottom-toolbar": "noinherit bg:default fg:#777777",
             }),
         )
 

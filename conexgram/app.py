@@ -222,7 +222,7 @@ class GatewayApp:
             return
         self._send(
             message.chat_id,
-            f"Uploaded file to workspace:\n{destination}",
+            f"Uploaded {message.media_type or 'file'} to workspace:\n{destination}",
             message.message_id,
         )
 

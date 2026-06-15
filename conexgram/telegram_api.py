@@ -28,6 +28,14 @@ class TelegramMessage:
     callback_query_id: Optional[str] = None
     document_file_id: Optional[str] = None
     document_file_name: Optional[str] = None
+    media_type: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class TelegramDownloadableMedia:
+    file_id: str
+    file_name: str
+    media_type: str
 
 
 class TelegramApiError(RuntimeError):
@@ -109,10 +117,10 @@ class TelegramClient:
         if not isinstance(message, dict):
             return None
         text = message.get("text") or message.get("caption") or ""
-        document = message.get("document")
+        media = self._extract_downloadable_media(message)
         if not isinstance(text, str):
             text = ""
-        if not text.strip() and not isinstance(document, dict):
+        if not text.strip() and media is None:
             return None
         chat = message.get("chat", {})
         user = message.get("from", {})
@@ -135,9 +143,85 @@ class TelegramClient:
             username=str(username) if username else None,
             first_name=str(first_name) if isinstance(first_name, str) and first_name.strip() else None,
             last_name=str(last_name) if isinstance(last_name, str) and last_name.strip() else None,
-            document_file_id=str(document.get("file_id")) if isinstance(document, dict) and document.get("file_id") else None,
-            document_file_name=str(document.get("file_name")) if isinstance(document, dict) and document.get("file_name") else None,
+            document_file_id=media.file_id if media else None,
+            document_file_name=media.file_name if media else None,
+            media_type=media.media_type if media else None,
         )
+
+    def _extract_downloadable_media(self, message: dict[str, Any]) -> Optional[TelegramDownloadableMedia]:
+        document = message.get("document")
+        if isinstance(document, dict) and document.get("file_id"):
+            file_id = str(document["file_id"])
+            file_name = self._media_file_name(
+                document.get("file_name"),
+                "document",
+                int(message.get("message_id", 0) or 0),
+                document.get("mime_type"),
+            )
+            return TelegramDownloadableMedia(file_id=file_id, file_name=file_name, media_type="document")
+
+        photo = message.get("photo")
+        if isinstance(photo, list):
+            best_photo = self._largest_photo_size(photo)
+            if best_photo is not None:
+                return TelegramDownloadableMedia(
+                    file_id=str(best_photo["file_id"]),
+                    file_name=self._media_file_name(
+                        None,
+                        "photo",
+                        int(message.get("message_id", 0) or 0),
+                        "image/jpeg",
+                    ),
+                    media_type="photo",
+                )
+
+        for media_type in ("voice", "audio", "video", "video_note", "animation"):
+            media = message.get(media_type)
+            if isinstance(media, dict) and media.get("file_id"):
+                return TelegramDownloadableMedia(
+                    file_id=str(media["file_id"]),
+                    file_name=self._media_file_name(
+                        media.get("file_name"),
+                        media_type,
+                        int(message.get("message_id", 0) or 0),
+                        media.get("mime_type"),
+                    ),
+                    media_type=media_type,
+                )
+        return None
+
+    @staticmethod
+    def _largest_photo_size(items: list[Any]) -> Optional[dict[str, Any]]:
+        photos = [item for item in items if isinstance(item, dict) and item.get("file_id")]
+        if not photos:
+            return None
+        return max(
+            photos,
+            key=lambda item: (
+                int(item.get("file_size") or 0),
+                int(item.get("width") or 0) * int(item.get("height") or 0),
+            ),
+        )
+
+    @staticmethod
+    def _media_file_name(raw_name: Any, media_type: str, message_id: int, mime_type: Any = None) -> str:
+        if isinstance(raw_name, str) and raw_name.strip():
+            return Path(raw_name.strip()).name
+        preferred_extension = {
+            "photo": ".jpg",
+            "voice": ".ogg",
+            "audio": ".mp3",
+            "video": ".mp4",
+            "video_note": ".mp4",
+            "animation": ".mp4",
+        }.get(media_type)
+        extension = preferred_extension or ""
+        if not extension and isinstance(mime_type, str) and mime_type.strip():
+            extension = mimetypes.guess_extension(mime_type.split(";", 1)[0].strip()) or ""
+        if not extension:
+            extension = ".bin"
+        safe_message_id = message_id if message_id > 0 else uuid.uuid4().hex
+        return f"telegram-{media_type}-{safe_message_id}{extension}"
 
     def download_file(self, file_id: str, destination: Path) -> Path:
         file_info = self._request("getFile", {"file_id": file_id}, timeout=30)

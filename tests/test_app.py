@@ -6,6 +6,7 @@ from conexgram.app import AttachmentDirective, GatewayApp
 from conexgram.commands import FileCommandResponse
 from conexgram.config import AppConfig, CodexConfig, GatewayConfig, TelegramConfig
 from conexgram.session_store import Session
+from conexgram.telegram_api import TelegramMessage
 
 
 def make_app(tmp: str, max_upload_bytes: int = 1024) -> GatewayApp:
@@ -67,6 +68,51 @@ class GatewayAppTests(unittest.TestCase):
 
             self.assertIsInstance(response, str)
             self.assertIn("Attachment file too large", response)
+
+    def test_media_upload_is_queued_as_codex_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            app.commands.active_profile_has_auth = lambda chat_id, user_id: True  # type: ignore[method-assign]
+            app.telegram.download_file = lambda file_id, destination: destination.write_bytes(b"image")  # type: ignore[method-assign]
+
+            app._handle_message(TelegramMessage(
+                update_id=1,
+                message_id=10,
+                chat_id=1,
+                user_id=2,
+                text="describe this",
+                document_file_id="photo-file",
+                document_file_name="telegram-photo-10.jpg",
+                media_type="photo",
+            ))
+
+            queued = app.queue.get_nowait().message
+            self.assertIn("Telegram media received.", queued.text)
+            self.assertIn("- Type: photo", queued.text)
+            self.assertIn("telegram_uploads/telegram-photo-10.jpg", queued.text)
+            self.assertIn("User caption/instruction:\ndescribe this", queued.text)
+            self.assertIsNone(queued.document_file_id)
+
+    def test_media_upload_without_caption_is_still_queued_as_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            app.commands.active_profile_has_auth = lambda chat_id, user_id: True  # type: ignore[method-assign]
+            app.telegram.download_file = lambda file_id, destination: destination.write_bytes(b"voice")  # type: ignore[method-assign]
+
+            app._handle_message(TelegramMessage(
+                update_id=1,
+                message_id=11,
+                chat_id=1,
+                user_id=2,
+                text="/upload",
+                document_file_id="voice-file",
+                document_file_name="telegram-voice-11.ogg",
+                media_type="voice",
+            ))
+
+            queued = app.queue.get_nowait().message
+            self.assertIn("- Type: voice", queued.text)
+            self.assertIn("No caption was provided.", queued.text)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .codex_runner import CodexRunner
@@ -31,6 +31,13 @@ class WorkItem:
 class AttachmentDirective:
     path_text: str
     caption: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class UploadedTelegramMedia:
+    path: Path
+    media_type: str
+    file_name: str
 
 
 class GatewayApp:
@@ -104,7 +111,31 @@ class GatewayApp:
             return
 
         if message.document_file_id:
-            self._handle_upload(message)
+            upload = self._handle_upload(message)
+            if upload is None:
+                return
+            if not self.commands.active_profile_has_auth(message.chat_id, message.user_id):
+                self._send(
+                    message.chat_id,
+                    self.commands.codex_not_ready_message(message.chat_id, message.user_id),
+                    message.message_id,
+                )
+                return
+            media_message = replace(
+                message,
+                text=self._media_context_prompt(message, upload),
+                document_file_id=None,
+                document_file_name=None,
+                media_type=None,
+            )
+            self.queue.put(WorkItem(message=media_message))
+            if self.config.gateway.send_ack:
+                session = self.commands.ensure_session(message.chat_id, message.user_id)
+                self._send(
+                    message.chat_id,
+                    f"Queued media for Codex session {session.id[:8]}.",
+                    message.message_id,
+                )
             return
 
         command_response = self.commands.handle_command(message.text, message.chat_id, message.user_id)
@@ -209,7 +240,7 @@ class GatewayApp:
                 reply_to_message_id=message.message_id,
             )
 
-    def _handle_upload(self, message: TelegramMessage) -> None:
+    def _handle_upload(self, message: TelegramMessage) -> Optional[UploadedTelegramMedia]:
         session = self.commands.ensure_session(message.chat_id, message.user_id)
         upload_dir = ensure_dir(Path(session.working_dir) / "telegram_uploads")
         filename = message.document_file_name or f"telegram-{message.document_file_id}"
@@ -219,12 +250,33 @@ class GatewayApp:
             self.telegram.download_file(message.document_file_id or "", destination)
         except TelegramApiError as exc:
             self._send(message.chat_id, f"Upload failed: {exc}", message.message_id)
-            return
-        self._send(
-            message.chat_id,
-            f"Uploaded {message.media_type or 'file'} to workspace:\n{destination}",
-            message.message_id,
+            return None
+        return UploadedTelegramMedia(
+            path=destination,
+            media_type=message.media_type or "file",
+            file_name=safe_name,
         )
+
+    @staticmethod
+    def _media_context_prompt(message: TelegramMessage, upload: UploadedTelegramMedia) -> str:
+        caption = message.text.strip()
+        has_caption = bool(caption and caption != "/upload")
+        lines = [
+            "Telegram media received.",
+            f"- Type: {upload.media_type}",
+            f"- Saved path: {upload.path}",
+            f"- File name: {upload.file_name}",
+            "",
+            "The file is available locally in the current workspace. Use this path if you need to inspect or operate on it.",
+        ]
+        if has_caption:
+            lines.extend(["", "User caption/instruction:", caption])
+        else:
+            lines.extend([
+                "",
+                "No caption was provided. Treat this media as context for the current session and respond naturally based on the previous conversation.",
+            ])
+        return "\n".join(lines)
 
     def _send(
         self,

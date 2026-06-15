@@ -32,17 +32,20 @@ class ConfigTests(unittest.TestCase):
                             "max_log_days": 7,
                             "max_log_mb": 50,
                         },
-                        "audio_transcription": {
+                        "stt": {
                             "enabled": True,
-                            "provider": "openai",
-                            "model": "gpt-4o-transcribe",
-                            "api_key_env": "CUSTOM_OPENAI_KEY",
+                            "python": str(root / ".venv-stt" / "bin" / "python"),
+                            "model": "tiny",
                             "language": "id",
-                            "prompt": "Telegram voice note in Indonesian.",
+                            "device": "cpu",
+                            "compute_type": "int8",
+                            "media_types": ["voice", "audio"],
                             "timeout_seconds": 45,
-                            "max_audio_bytes": 12345,
-                            "convert_unsupported": True,
-                            "ffmpeg_binary": "ffmpeg",
+                        },
+                        "uploads": {
+                            "retention_hours": 6,
+                            "cleanup_interval_minutes": 30,
+                            "keep_transcripts": True,
                         },
                     }
                 ),
@@ -55,14 +58,16 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.gateway.worker_count, 2)
             self.assertEqual(config.gateway.max_log_days, 7)
             self.assertEqual(config.gateway.max_log_mb, 50)
-            self.assertTrue(config.audio_transcription.enabled)
-            self.assertEqual(config.audio_transcription.provider, "openai")
-            self.assertEqual(config.audio_transcription.model, "gpt-4o-transcribe")
-            self.assertEqual(config.audio_transcription.api_key_env, "CUSTOM_OPENAI_KEY")
-            self.assertEqual(config.audio_transcription.language, "id")
-            self.assertEqual(config.audio_transcription.prompt, "Telegram voice note in Indonesian.")
-            self.assertEqual(config.audio_transcription.timeout_seconds, 45)
-            self.assertEqual(config.audio_transcription.max_audio_bytes, 12345)
+            self.assertTrue(config.stt.enabled)
+            self.assertEqual(config.stt.model, "tiny")
+            self.assertEqual(config.stt.language, "id")
+            self.assertEqual(config.stt.device, "cpu")
+            self.assertEqual(config.stt.compute_type, "int8")
+            self.assertEqual(config.stt.media_types, ["voice", "audio"])
+            self.assertEqual(config.stt.timeout_seconds, 45)
+            self.assertEqual(config.uploads.retention_hours, 6)
+            self.assertEqual(config.uploads.cleanup_interval_minutes, 30)
+            self.assertTrue(config.uploads.keep_transcripts)
 
 
 if __name__ == "__main__":

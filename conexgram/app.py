@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .audio_transcription import AudioTranscriber
 from .codex_runner import CodexRunner
 from .commands import CommandHandler, FileCommandResponse, MessageCommandResponse, ProfileCommandResponse
 from .config import AppConfig
@@ -17,6 +17,7 @@ from .message_format import split_message
 from .paths import ensure_dir
 from .progress import ProgressNotifier
 from .session_store import SessionStore, now_iso
+from .stt import LocalSttTranscriber
 from .telegram_api import TelegramClient, TelegramMessage, TelegramApiError
 from typing import Optional, Union
 
@@ -41,7 +42,6 @@ class UploadedTelegramMedia:
     file_name: str
     transcript: str = ""
     transcript_error: str = ""
-    transcribed_path: Optional[Path] = None
 
 
 class GatewayApp:
@@ -62,7 +62,7 @@ class GatewayApp:
         self.commands = CommandHandler(config, self.store)
         self.commands.set_notify_callback(self._notify_for_commands)
         self.progress = ProgressNotifier(self.telegram, config.progress, self._send)
-        self.audio_transcriber = AudioTranscriber(config.audio_transcription)
+        self.stt_transcriber = LocalSttTranscriber(config.stt)
         self.queue: queue.Queue[WorkItem] = queue.Queue()
         self.stop_event = threading.Event()
 
@@ -71,10 +71,18 @@ class GatewayApp:
 
     def run(self) -> None:
         LOG.info("Starting Conexgram")
+        cleanup_worker = threading.Thread(target=self._cleanup_loop, name="upload-cleanup", daemon=True)
+        cleanup_worker.start()
         for index in range(self.config.gateway.worker_count):
             worker = threading.Thread(target=self._worker_loop, name=f"codex-worker-{index + 1}", daemon=True)
             worker.start()
         self._poll_loop()
+
+    def _cleanup_loop(self) -> None:
+        self._cleanup_uploads_once()
+        interval = max(300, self.config.uploads.cleanup_interval_minutes * 60)
+        while not self.stop_event.wait(interval):
+            self._cleanup_uploads_once()
 
     def _poll_loop(self) -> None:
         offset = self.store.update_offset
@@ -257,14 +265,13 @@ class GatewayApp:
             self._send(message.chat_id, f"Upload failed: {exc}", message.message_id)
             return None
         media_type = message.media_type or "file"
-        transcription = self.audio_transcriber.transcribe(destination, media_type)
+        transcription = self.stt_transcriber.transcribe(destination, media_type)
         return UploadedTelegramMedia(
             path=destination,
             media_type=media_type,
             file_name=safe_name,
             transcript=transcription.text,
             transcript_error=transcription.error,
-            transcribed_path=transcription.uploaded_path,
         )
 
     @staticmethod
@@ -289,8 +296,8 @@ class GatewayApp:
             lines.extend([
                 "",
                 "Audio transcript is not available.",
-                f"Transcription status: {upload.transcript_error or 'audio transcription is disabled.'}",
-                "Do not run local audio transcription tools or download transcription models. If the user needs transcription, explain that audio transcription must be configured first.",
+                f"Transcription status: {upload.transcript_error or 'STT is disabled.'}",
+                "Do not run other local audio transcription tools or download transcription models. If the user needs transcription, explain that STT must be configured first.",
             ])
         else:
             lines.extend([
@@ -311,6 +318,46 @@ class GatewayApp:
                     "No caption was provided. Treat this media as context for the current session and respond naturally based on the previous conversation.",
                 ])
         return "\n".join(lines)
+
+    def _cleanup_uploads_once(self) -> None:
+        cutoff = time.time() - (self.config.uploads.retention_hours * 3600)
+        for upload_dir in self._known_upload_dirs():
+            self._cleanup_upload_dir(upload_dir, cutoff)
+
+    def _known_upload_dirs(self) -> set[Path]:
+        roots = {Path(self.config.codex.default_working_dir)}
+        roots.update(Path(session.working_dir) for session in self.store.list_all_sessions())
+        return {root / "telegram_uploads" for root in roots}
+
+    def _cleanup_upload_dir(self, upload_dir: Path, cutoff: float) -> None:
+        try:
+            if not upload_dir.exists() or not upload_dir.is_dir():
+                return
+            for item in upload_dir.rglob("*"):
+                if not item.exists() or item.is_dir():
+                    continue
+                try:
+                    stat = item.stat()
+                except OSError:
+                    continue
+                if stat.st_mtime <= cutoff:
+                    try:
+                        item.unlink()
+                        LOG.info("Deleted expired Telegram upload: %s", item)
+                    except OSError as exc:
+                        LOG.warning("Failed to delete expired Telegram upload %s: %s", item, exc)
+            self._remove_empty_dirs(upload_dir)
+        except OSError as exc:
+            LOG.warning("Upload cleanup failed for %s: %s", upload_dir, exc)
+
+    def _remove_empty_dirs(self, root: Path) -> None:
+        for current, dirs, _files in os.walk(root, topdown=False):
+            for dirname in dirs:
+                path = Path(current) / dirname
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
 
     def _send(
         self,

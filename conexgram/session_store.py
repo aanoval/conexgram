@@ -479,6 +479,10 @@ class SessionStore:
             items = [s for s in self.sessions.values() if s.scope_key == scope_key]
             return sorted(items, key=lambda s: s.updated_at, reverse=True)
 
+    def list_all_sessions(self) -> list[Session]:
+        with self._lock:
+            return list(self.sessions.values())
+
     def find_for_scope(self, scope_key: str, selector: str) -> Optional[Session]:
         selector = selector.strip()
         scoped = self.list_for_scope(scope_key)

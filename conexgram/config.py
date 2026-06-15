@@ -68,17 +68,22 @@ class ProgressConfig:
 
 
 @dataclass(frozen=True)
-class AudioTranscriptionConfig:
+class SttConfig:
     enabled: bool = False
-    provider: str = "none"
-    model: str = "gpt-4o-mini-transcribe"
-    api_key_env: str = "OPENAI_API_KEY"
-    language: str = ""
-    prompt: str = ""
+    python: str = ""
+    model: str = "tiny"
+    language: str = "id"
+    device: str = "cpu"
+    compute_type: str = "int8"
+    media_types: list[str] = field(default_factory=lambda: ["voice", "audio"])
     timeout_seconds: int = 120
-    max_audio_bytes: int = 25 * 1024 * 1024
-    convert_unsupported: bool = True
-    ffmpeg_binary: str = "ffmpeg"
+
+
+@dataclass(frozen=True)
+class UploadsConfig:
+    retention_hours: int = 6
+    cleanup_interval_minutes: int = 60
+    keep_transcripts: bool = True
 
 
 @dataclass(frozen=True)
@@ -88,7 +93,8 @@ class AppConfig:
     gateway: GatewayConfig
     config_path: Path
     progress: ProgressConfig = field(default_factory=ProgressConfig)
-    audio_transcription: AudioTranscriptionConfig = field(default_factory=AudioTranscriptionConfig)
+    stt: SttConfig = field(default_factory=SttConfig)
+    uploads: UploadsConfig = field(default_factory=UploadsConfig)
 
 
 def example_config_text() -> str:
@@ -157,17 +163,20 @@ def example_config_text() -> str:
                 "Processing is taking longer than usual, but the session is still running.",
             ],
         },
-        "audio_transcription": {
+        "stt": {
             "enabled": False,
-            "provider": "openai",
-            "model": "gpt-4o-mini-transcribe",
-            "api_key_env": "OPENAI_API_KEY",
-            "language": "",
-            "prompt": "",
+            "python": str(Path.home() / "ConexgramWorkspace" / ".venv-stt" / "bin" / "python"),
+            "model": "tiny",
+            "language": "id",
+            "device": "cpu",
+            "compute_type": "int8",
+            "media_types": ["voice", "audio"],
             "timeout_seconds": 120,
-            "max_audio_bytes": 26214400,
-            "convert_unsupported": True,
-            "ffmpeg_binary": "ffmpeg",
+        },
+        "uploads": {
+            "retention_hours": 6,
+            "cleanup_interval_minutes": 60,
+            "keep_transcripts": True,
         },
     }
     return json.dumps(example, indent=2) + "\n"
@@ -221,17 +230,20 @@ def save_config(config: AppConfig) -> None:
             "progress_interval_seconds": config.progress.progress_interval_seconds,
             "messages": config.progress.messages,
         },
-        "audio_transcription": {
-            "enabled": config.audio_transcription.enabled,
-            "provider": config.audio_transcription.provider,
-            "model": config.audio_transcription.model,
-            "api_key_env": config.audio_transcription.api_key_env,
-            "language": config.audio_transcription.language,
-            "prompt": config.audio_transcription.prompt,
-            "timeout_seconds": config.audio_transcription.timeout_seconds,
-            "max_audio_bytes": config.audio_transcription.max_audio_bytes,
-            "convert_unsupported": config.audio_transcription.convert_unsupported,
-            "ffmpeg_binary": config.audio_transcription.ffmpeg_binary,
+        "stt": {
+            "enabled": config.stt.enabled,
+            "python": config.stt.python,
+            "model": config.stt.model,
+            "language": config.stt.language,
+            "device": config.stt.device,
+            "compute_type": config.stt.compute_type,
+            "media_types": config.stt.media_types,
+            "timeout_seconds": config.stt.timeout_seconds,
+        },
+        "uploads": {
+            "retention_hours": config.uploads.retention_hours,
+            "cleanup_interval_minutes": config.uploads.cleanup_interval_minutes,
+            "keep_transcripts": config.uploads.keep_transcripts,
         },
     }
 
@@ -259,7 +271,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     codex_raw = raw.get("codex", {})
     gateway_raw = raw.get("gateway", {})
     progress_raw = raw.get("progress", {})
-    audio_raw = raw.get("audio_transcription", {})
+    stt_raw = raw.get("stt", {})
+    uploads_raw = raw.get("uploads", {})
 
     bot_token = str(telegram_raw.get("bot_token", "")).strip()
     if not bot_token or bot_token == "REPLACE_WITH_BOTFATHER_TOKEN":
@@ -348,7 +361,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
             progress_interval_seconds=max(10, int(progress_raw.get("progress_interval_seconds", 60))),
             messages=_progress_messages(progress_raw.get("messages")),
         ),
-        audio_transcription=_audio_transcription_config(audio_raw),
+        stt=_stt_config(stt_raw),
+        uploads=_uploads_config(uploads_raw),
     )
 
 
@@ -379,23 +393,30 @@ def _progress_messages(value: Any) -> list[str]:
     return messages or defaults
 
 
-def _audio_transcription_config(value: Any) -> AudioTranscriptionConfig:
+def _stt_config(value: Any) -> SttConfig:
     if not isinstance(value, dict):
         value = {}
-    provider = str(value.get("provider", "none")).strip().lower() or "none"
-    if provider not in {"none", "openai"}:
-        raise ValueError("audio_transcription.provider must be none or openai")
-    model = str(value.get("model", "gpt-4o-mini-transcribe")).strip() or "gpt-4o-mini-transcribe"
-    api_key_env = str(value.get("api_key_env", "OPENAI_API_KEY")).strip() or "OPENAI_API_KEY"
-    return AudioTranscriptionConfig(
+    media_types_raw = value.get("media_types", ["voice", "audio"])
+    if not isinstance(media_types_raw, list):
+        raise ValueError("stt.media_types must be an array")
+    media_types = [str(item).strip().lower() for item in media_types_raw if str(item).strip()]
+    return SttConfig(
         enabled=bool(value.get("enabled", False)),
-        provider=provider,
-        model=model,
-        api_key_env=api_key_env,
-        language=str(value.get("language", "")).strip(),
-        prompt=str(value.get("prompt", "")).strip(),
+        python=str(value.get("python", "")).strip(),
+        model=str(value.get("model", "tiny")).strip() or "tiny",
+        language=str(value.get("language", "id")).strip() or "id",
+        device=str(value.get("device", "cpu")).strip() or "cpu",
+        compute_type=str(value.get("compute_type", "int8")).strip() or "int8",
+        media_types=media_types or ["voice", "audio"],
         timeout_seconds=max(10, int(value.get("timeout_seconds", 120))),
-        max_audio_bytes=max(1024, int(value.get("max_audio_bytes", 25 * 1024 * 1024))),
-        convert_unsupported=bool(value.get("convert_unsupported", True)),
-        ffmpeg_binary=str(value.get("ffmpeg_binary", "ffmpeg")).strip() or "ffmpeg",
+    )
+
+
+def _uploads_config(value: Any) -> UploadsConfig:
+    if not isinstance(value, dict):
+        value = {}
+    return UploadsConfig(
+        retention_hours=max(1, int(value.get("retention_hours", 6))),
+        cleanup_interval_minutes=max(5, int(value.get("cleanup_interval_minutes", 60))),
+        keep_transcripts=bool(value.get("keep_transcripts", True)),
     )

@@ -1,12 +1,14 @@
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
-from conexgram.audio_transcription import AudioTranscriptionResult
 from conexgram.app import AttachmentDirective, GatewayApp
 from conexgram.commands import FileCommandResponse
 from conexgram.config import AppConfig, CodexConfig, GatewayConfig, TelegramConfig
 from conexgram.session_store import Session
+from conexgram.stt import SttResult
 from conexgram.telegram_api import TelegramMessage
 
 
@@ -114,7 +116,7 @@ class GatewayAppTests(unittest.TestCase):
             queued = app.queue.get_nowait().message
             self.assertIn("- Type: voice", queued.text)
             self.assertIn("Audio transcript is not available.", queued.text)
-            self.assertIn("Do not run local audio transcription tools", queued.text)
+            self.assertIn("Do not run other local audio transcription tools", queued.text)
             self.assertIn("No caption was provided.", queued.text)
 
     def test_voice_upload_queues_transcript_as_codex_context(self):
@@ -122,9 +124,8 @@ class GatewayAppTests(unittest.TestCase):
             app = make_app(tmp)
             app.commands.active_profile_has_auth = lambda chat_id, user_id: True  # type: ignore[method-assign]
             app.telegram.download_file = lambda file_id, destination: destination.write_bytes(b"voice")  # type: ignore[method-assign]
-            app.audio_transcriber.transcribe = lambda path, media_type: AudioTranscriptionResult(  # type: ignore[method-assign]
+            app.stt_transcriber.transcribe = lambda path, media_type: SttResult(  # type: ignore[method-assign]
                 text="tolong cek status project ini",
-                uploaded_path=Path(path),
             )
 
             app._handle_message(TelegramMessage(
@@ -143,6 +144,29 @@ class GatewayAppTests(unittest.TestCase):
             self.assertIn("tolong cek status project ini", queued.text)
             self.assertIn("Use the transcript as the user's voice instruction/context.", queued.text)
             self.assertIn("No caption was provided. Treat the audio transcript as the latest user message", queued.text)
+
+    def test_cleanup_uploads_deletes_expired_files_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            upload_dir = Path(tmp) / "telegram_uploads"
+            nested = upload_dir / "_transcoded"
+            nested.mkdir(parents=True)
+            old_file = upload_dir / "old.ogg"
+            fresh_file = upload_dir / "fresh.jpg"
+            old_nested = nested / "old.mp3"
+            old_file.write_bytes(b"old")
+            fresh_file.write_bytes(b"fresh")
+            old_nested.write_bytes(b"old nested")
+            old_time = time.time() - 8 * 3600
+            for path in (old_file, old_nested):
+                path.touch()
+                os.utime(path, (old_time, old_time))
+
+            app._cleanup_uploads_once()
+
+            self.assertFalse(old_file.exists())
+            self.assertFalse(old_nested.exists())
+            self.assertTrue(fresh_file.exists())
 
 
 if __name__ == "__main__":

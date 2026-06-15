@@ -235,10 +235,10 @@ Key fields:
 - `codex.mode`
 - `codex.full_access`
 - `codex.allow_runtime_full_access`
-- `audio_transcription.enabled`
-- `audio_transcription.provider`
-- `audio_transcription.model`
-- `audio_transcription.api_key_env`
+- `stt.enabled`
+- `stt.python`
+- `stt.model`
+- `uploads.retention_hours`
 - `progress.typing_indicator`
 - `progress.progress_messages`
 
@@ -302,35 +302,54 @@ Any non-command text is forwarded to the active Codex session.
 
 ## Voice and audio transcription
 
-Codex CLI does not accept Telegram voice notes as native audio input. Conexgram can optionally transcribe Telegram `voice` and `audio` messages first, then forward the transcript to Codex as the user instruction/context.
+Codex CLI does not accept Telegram voice notes as native audio input. Conexgram can optionally transcribe Telegram `voice` and `audio` messages locally with `faster-whisper`, then forward the transcript to Codex as the user instruction/context.
 
-Enable it in `~/.conexgram/config.json`:
+Keep STT dependencies in a separate venv:
+
+```bash
+cd /path/to/conexgram
+python3 -m venv .venv-stt
+.venv-stt/bin/python -m pip install --upgrade pip
+.venv-stt/bin/python -m pip install faster-whisper
+.venv-stt/bin/python -c "from faster_whisper import WhisperModel; print('ok')"
+```
+
+Then enable it in `~/.conexgram/config.json`:
 
 ```json
 {
-  "audio_transcription": {
+  "stt": {
     "enabled": true,
-    "provider": "openai",
-    "model": "gpt-4o-mini-transcribe",
-    "api_key_env": "OPENAI_API_KEY",
+    "python": "/path/to/conexgram/.venv-stt/bin/python",
+    "model": "tiny",
     "language": "id",
-    "prompt": "Telegram voice note for a coding assistant.",
-    "timeout_seconds": 120,
-    "max_audio_bytes": 26214400,
-    "convert_unsupported": true,
-    "ffmpeg_binary": "ffmpeg"
+    "device": "cpu",
+    "compute_type": "int8",
+    "media_types": ["voice", "audio"],
+    "timeout_seconds": 120
   }
 }
 ```
 
-Set the API key in the service environment, not in git:
+The first transcription downloads the configured model to the user's Hugging Face cache, usually under `~/.cache/huggingface`. Conexgram does not use OpenAI Audio API for this path and does not need `OPENAI_API_KEY`.
 
-```bash
-launchctl setenv OPENAI_API_KEY "sk-..."
-launchctl kickstart -k "gui/$(id -u)/com.conexgram.agent"
+## Upload cleanup
+
+Conexgram stores inbound Telegram media under `telegram_uploads/` inside the active workspace. To avoid filling storage, expired upload files are deleted on startup and then periodically while Conexgram is running.
+
+Default:
+
+```json
+{
+  "uploads": {
+    "retention_hours": 6,
+    "cleanup_interval_minutes": 60,
+    "keep_transcripts": true
+  }
+}
 ```
 
-Telegram voice notes are usually OGG/Opus. OpenAI file transcription accepts common formats like mp3, mp4, m4a, wav, and webm, so Conexgram converts unsupported audio to mp3 with `ffmpeg` when `convert_unsupported=true`. Use an absolute `ffmpeg_binary` path if your auto-start service does not inherit your shell `PATH`. It does not run local Whisper or download local transcription models.
+Only files inside known `telegram_uploads/` directories are cleaned. Transcripts already inserted into Codex session context are kept in the session/log history.
 
 ## Progress UX
 

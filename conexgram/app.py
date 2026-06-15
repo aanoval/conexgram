@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from .audio_transcription import AudioTranscriber
 from .codex_runner import CodexRunner
 from .commands import CommandHandler, FileCommandResponse, MessageCommandResponse, ProfileCommandResponse
 from .config import AppConfig
@@ -38,6 +39,9 @@ class UploadedTelegramMedia:
     path: Path
     media_type: str
     file_name: str
+    transcript: str = ""
+    transcript_error: str = ""
+    transcribed_path: Optional[Path] = None
 
 
 class GatewayApp:
@@ -58,6 +62,7 @@ class GatewayApp:
         self.commands = CommandHandler(config, self.store)
         self.commands.set_notify_callback(self._notify_for_commands)
         self.progress = ProgressNotifier(self.telegram, config.progress, self._send)
+        self.audio_transcriber = AudioTranscriber(config.audio_transcription)
         self.queue: queue.Queue[WorkItem] = queue.Queue()
         self.stop_event = threading.Event()
 
@@ -251,10 +256,15 @@ class GatewayApp:
         except TelegramApiError as exc:
             self._send(message.chat_id, f"Upload failed: {exc}", message.message_id)
             return None
+        media_type = message.media_type or "file"
+        transcription = self.audio_transcriber.transcribe(destination, media_type)
         return UploadedTelegramMedia(
             path=destination,
-            media_type=message.media_type or "file",
+            media_type=media_type,
             file_name=safe_name,
+            transcript=transcription.text,
+            transcript_error=transcription.error,
+            transcribed_path=transcription.uploaded_path,
         )
 
     @staticmethod
@@ -266,16 +276,40 @@ class GatewayApp:
             f"- Type: {upload.media_type}",
             f"- Saved path: {upload.path}",
             f"- File name: {upload.file_name}",
-            "",
-            "The file is available locally in the current workspace. Use this path if you need to inspect or operate on it.",
         ]
-        if has_caption:
-            lines.extend(["", "User caption/instruction:", caption])
+        if upload.transcript:
+            lines.extend([
+                "",
+                "Audio transcript:",
+                upload.transcript,
+                "",
+                "Use the transcript as the user's voice instruction/context. Do not run local audio transcription tools or download transcription models.",
+            ])
+        elif upload.media_type in {"voice", "audio"}:
+            lines.extend([
+                "",
+                "Audio transcript is not available.",
+                f"Transcription status: {upload.transcript_error or 'audio transcription is disabled.'}",
+                "Do not run local audio transcription tools or download transcription models. If the user needs transcription, explain that audio transcription must be configured first.",
+            ])
         else:
             lines.extend([
                 "",
-                "No caption was provided. Treat this media as context for the current session and respond naturally based on the previous conversation.",
+                "The file is available locally in the current workspace. Use this path if you need to inspect or operate on it.",
             ])
+        if has_caption:
+            lines.extend(["", "User caption/instruction:", caption])
+        else:
+            if upload.transcript:
+                lines.extend([
+                    "",
+                    "No caption was provided. Treat the audio transcript as the latest user message and respond naturally based on the previous conversation.",
+                ])
+            else:
+                lines.extend([
+                    "",
+                    "No caption was provided. Treat this media as context for the current session and respond naturally based on the previous conversation.",
+                ])
         return "\n".join(lines)
 
     def _send(

@@ -73,6 +73,7 @@ Good fits:
 - Runtime controls like `/model`, `/reasoning`, `/mode`, `/preset`, `/fast`
 - Progress UX like `/typing`, `/progress`, `/silent`, `/tail`
 - Telegram file upload into the active workspace
+- Optional Telegram voice/audio transcription before forwarding to Codex
 - Optional local file send-back with `/sendfile`
 - Works in the foreground or as an auto-start service on macOS, Linux, or Windows
 - No third-party Python dependencies
@@ -117,7 +118,7 @@ Read more in [docs/security.md](docs/security.md).
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.9+
 - `codex` CLI installed and authenticated
 - A Telegram bot token from BotFather
 - Your Telegram user id or allowed chat id
@@ -234,6 +235,10 @@ Key fields:
 - `codex.mode`
 - `codex.full_access`
 - `codex.allow_runtime_full_access`
+- `audio_transcription.enabled`
+- `audio_transcription.provider`
+- `audio_transcription.model`
+- `audio_transcription.api_key_env`
 - `progress.typing_indicator`
 - `progress.progress_messages`
 
@@ -294,6 +299,38 @@ Full command set:
 - `/help` — show help
 
 Any non-command text is forwarded to the active Codex session.
+
+## Voice and audio transcription
+
+Codex CLI does not accept Telegram voice notes as native audio input. Conexgram can optionally transcribe Telegram `voice` and `audio` messages first, then forward the transcript to Codex as the user instruction/context.
+
+Enable it in `~/.conexgram/config.json`:
+
+```json
+{
+  "audio_transcription": {
+    "enabled": true,
+    "provider": "openai",
+    "model": "gpt-4o-mini-transcribe",
+    "api_key_env": "OPENAI_API_KEY",
+    "language": "id",
+    "prompt": "Telegram voice note for a coding assistant.",
+    "timeout_seconds": 120,
+    "max_audio_bytes": 26214400,
+    "convert_unsupported": true,
+    "ffmpeg_binary": "ffmpeg"
+  }
+}
+```
+
+Set the API key in the service environment, not in git:
+
+```bash
+launchctl setenv OPENAI_API_KEY "sk-..."
+launchctl kickstart -k "gui/$(id -u)/com.conexgram.agent"
+```
+
+Telegram voice notes are usually OGG/Opus. OpenAI file transcription accepts common formats like mp3, mp4, m4a, wav, and webm, so Conexgram converts unsupported audio to mp3 with `ffmpeg` when `convert_unsupported=true`. Use an absolute `ffmpeg_binary` path if your auto-start service does not inherit your shell `PATH`. It does not run local Whisper or download local transcription models.
 
 ## Progress UX
 

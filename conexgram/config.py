@@ -68,12 +68,27 @@ class ProgressConfig:
 
 
 @dataclass(frozen=True)
+class AudioTranscriptionConfig:
+    enabled: bool = False
+    provider: str = "none"
+    model: str = "gpt-4o-mini-transcribe"
+    api_key_env: str = "OPENAI_API_KEY"
+    language: str = ""
+    prompt: str = ""
+    timeout_seconds: int = 120
+    max_audio_bytes: int = 25 * 1024 * 1024
+    convert_unsupported: bool = True
+    ffmpeg_binary: str = "ffmpeg"
+
+
+@dataclass(frozen=True)
 class AppConfig:
     telegram: TelegramConfig
     codex: CodexConfig
     gateway: GatewayConfig
     config_path: Path
     progress: ProgressConfig = field(default_factory=ProgressConfig)
+    audio_transcription: AudioTranscriptionConfig = field(default_factory=AudioTranscriptionConfig)
 
 
 def example_config_text() -> str:
@@ -142,6 +157,18 @@ def example_config_text() -> str:
                 "Processing is taking longer than usual, but the session is still running.",
             ],
         },
+        "audio_transcription": {
+            "enabled": False,
+            "provider": "openai",
+            "model": "gpt-4o-mini-transcribe",
+            "api_key_env": "OPENAI_API_KEY",
+            "language": "",
+            "prompt": "",
+            "timeout_seconds": 120,
+            "max_audio_bytes": 26214400,
+            "convert_unsupported": True,
+            "ffmpeg_binary": "ffmpeg",
+        },
     }
     return json.dumps(example, indent=2) + "\n"
 
@@ -194,6 +221,18 @@ def save_config(config: AppConfig) -> None:
             "progress_interval_seconds": config.progress.progress_interval_seconds,
             "messages": config.progress.messages,
         },
+        "audio_transcription": {
+            "enabled": config.audio_transcription.enabled,
+            "provider": config.audio_transcription.provider,
+            "model": config.audio_transcription.model,
+            "api_key_env": config.audio_transcription.api_key_env,
+            "language": config.audio_transcription.language,
+            "prompt": config.audio_transcription.prompt,
+            "timeout_seconds": config.audio_transcription.timeout_seconds,
+            "max_audio_bytes": config.audio_transcription.max_audio_bytes,
+            "convert_unsupported": config.audio_transcription.convert_unsupported,
+            "ffmpeg_binary": config.audio_transcription.ffmpeg_binary,
+        },
     }
 
     config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -220,6 +259,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     codex_raw = raw.get("codex", {})
     gateway_raw = raw.get("gateway", {})
     progress_raw = raw.get("progress", {})
+    audio_raw = raw.get("audio_transcription", {})
 
     bot_token = str(telegram_raw.get("bot_token", "")).strip()
     if not bot_token or bot_token == "REPLACE_WITH_BOTFATHER_TOKEN":
@@ -308,6 +348,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
             progress_interval_seconds=max(10, int(progress_raw.get("progress_interval_seconds", 60))),
             messages=_progress_messages(progress_raw.get("messages")),
         ),
+        audio_transcription=_audio_transcription_config(audio_raw),
     )
 
 
@@ -336,3 +377,25 @@ def _progress_messages(value: Any) -> list[str]:
         return defaults
     messages = [str(item).strip() for item in value if str(item).strip()]
     return messages or defaults
+
+
+def _audio_transcription_config(value: Any) -> AudioTranscriptionConfig:
+    if not isinstance(value, dict):
+        value = {}
+    provider = str(value.get("provider", "none")).strip().lower() or "none"
+    if provider not in {"none", "openai"}:
+        raise ValueError("audio_transcription.provider must be none or openai")
+    model = str(value.get("model", "gpt-4o-mini-transcribe")).strip() or "gpt-4o-mini-transcribe"
+    api_key_env = str(value.get("api_key_env", "OPENAI_API_KEY")).strip() or "OPENAI_API_KEY"
+    return AudioTranscriptionConfig(
+        enabled=bool(value.get("enabled", False)),
+        provider=provider,
+        model=model,
+        api_key_env=api_key_env,
+        language=str(value.get("language", "")).strip(),
+        prompt=str(value.get("prompt", "")).strip(),
+        timeout_seconds=max(10, int(value.get("timeout_seconds", 120))),
+        max_audio_bytes=max(1024, int(value.get("max_audio_bytes", 25 * 1024 * 1024))),
+        convert_unsupported=bool(value.get("convert_unsupported", True)),
+        ffmpeg_binary=str(value.get("ffmpeg_binary", "ffmpeg")).strip() or "ffmpeg",
+    )

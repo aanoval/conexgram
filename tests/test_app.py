@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from conexgram.audio_transcription import AudioTranscriptionResult
 from conexgram.app import AttachmentDirective, GatewayApp
 from conexgram.commands import FileCommandResponse
 from conexgram.config import AppConfig, CodexConfig, GatewayConfig, TelegramConfig
@@ -112,7 +113,36 @@ class GatewayAppTests(unittest.TestCase):
 
             queued = app.queue.get_nowait().message
             self.assertIn("- Type: voice", queued.text)
+            self.assertIn("Audio transcript is not available.", queued.text)
+            self.assertIn("Do not run local audio transcription tools", queued.text)
             self.assertIn("No caption was provided.", queued.text)
+
+    def test_voice_upload_queues_transcript_as_codex_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            app.commands.active_profile_has_auth = lambda chat_id, user_id: True  # type: ignore[method-assign]
+            app.telegram.download_file = lambda file_id, destination: destination.write_bytes(b"voice")  # type: ignore[method-assign]
+            app.audio_transcriber.transcribe = lambda path, media_type: AudioTranscriptionResult(  # type: ignore[method-assign]
+                text="tolong cek status project ini",
+                uploaded_path=Path(path),
+            )
+
+            app._handle_message(TelegramMessage(
+                update_id=1,
+                message_id=12,
+                chat_id=1,
+                user_id=2,
+                text="/upload",
+                document_file_id="voice-file",
+                document_file_name="telegram-voice-12.ogg",
+                media_type="voice",
+            ))
+
+            queued = app.queue.get_nowait().message
+            self.assertIn("Audio transcript:", queued.text)
+            self.assertIn("tolong cek status project ini", queued.text)
+            self.assertIn("Use the transcript as the user's voice instruction/context.", queued.text)
+            self.assertIn("No caption was provided. Treat the audio transcript as the latest user message", queued.text)
 
 
 if __name__ == "__main__":

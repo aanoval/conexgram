@@ -165,6 +165,10 @@ class CommandHandler:
             if session.profile_id != profile.id:
                 session.profile_id = profile.id
                 self.store.update(session)
+            resolved_model = self._resolve_model_alias(session.model)
+            if resolved_model != session.model:
+                session.model = resolved_model
+                self.store.update(session)
             return session
         return self.store.create(
             scope_key=scope_key,
@@ -176,6 +180,24 @@ class CommandHandler:
             mode=self.config.codex.mode,
             fast_mode=self.config.codex.fast_mode,
         )
+
+    def _resolve_model_alias(self, model: Optional[str]) -> Optional[str]:
+        if not model:
+            return None
+        model = model.strip()
+        if not model:
+            return None
+        preset = self.config.codex.model_presets.get(model)
+        if preset is not None:
+            return preset
+        preset = self.config.codex.model_presets.get(model.lower())
+        return preset if preset is not None else model
+
+    def _set_default_model(self, model: str) -> None:
+        if self.config.codex.model == model:
+            return
+        self.config = replace(self.config, codex=replace(self.config.codex, model=model))
+        save_config(self.config)
 
     def active_profile(self, chat_id: int, user_id: int):
         return self.store.active_profile(self.scope_key(chat_id, user_id))
@@ -502,11 +524,14 @@ class CommandHandler:
         session = self.ensure_session(chat_id, user_id)
         if not args:
             return f"Current model: {session.model or 'Codex default'}"
-        model = args[0].strip()
-        preset = self.config.codex.model_presets.get(model)
-        if preset is not None:
-            model = preset
-        session.model = None if model.lower() in {"default", "none", ""} else model
+        raw_model = args[0].strip()
+        if raw_model.lower() in {"default", "none", ""}:
+            session.model = None
+        else:
+            model = self._resolve_model_alias(raw_model) or raw_model
+            session.model = model
+            if raw_model.lower() == "spark":
+                self._set_default_model(model)
         self.store.update(session)
         return f"Model updated for this session: {session.model or 'Codex default'}"
 

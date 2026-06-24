@@ -28,6 +28,16 @@ class CodexTurnResult:
     final_message_path: Path
 
 
+@dataclass
+class _CodexAttempt:
+    thread_id: Optional[str]
+    return_code: int
+    raw_lines: list[str]
+    agent_messages: list[str]
+    timed_out: bool = False
+    model: Optional[str] = None
+
+
 class CodexRunner:
     def __init__(
         self,
@@ -66,10 +76,112 @@ class CodexRunner:
         profile_home = profile_home or Path.home()
         command_env = self._build_environment(profile_home, env)
 
+        attempted_model = self._resolve_model_alias(session.model)
+        attempt = self._run_command(
+            session_id=session.id,
+            command=command,
+            prompt=prompt,
+            working_dir=working_dir,
+            env=command_env,
+            initial_thread_id=session.codex_thread_id,
+            event_callback=event_callback,
+            model=attempted_model,
+        )
+        raw_lines = list(attempt.raw_lines)
+        final_return_code = attempt.return_code
+        thread_id = attempt.thread_id
+
+        fallback_model = self._fallback_model()
+        fallback_attempt: Optional[_CodexAttempt] = None
+        if self._should_try_fallback(attempt, fallback_model):
+            LOG.info(
+                "Codex quota/rate-limit detected for model %s; retrying with %s",
+                attempted_model or "default",
+                fallback_model,
+            )
+            fallback_event = {
+                "type": "conexgram.fallback",
+                "reason": "quota_or_rate_limit",
+                "from_model": attempted_model or "default",
+                "to_model": fallback_model,
+            }
+            raw_lines.append(json.dumps(fallback_event) + "\n")
+            if final_message_path.exists():
+                final_message_path.unlink()
+            fallback_command = self._build_command(
+                session,
+                final_message_path,
+                override_model=fallback_model,
+            )
+            fallback_attempt = self._run_command(
+                session_id=session.id,
+                command=fallback_command,
+                prompt=prompt,
+                working_dir=working_dir,
+                env=command_env,
+                initial_thread_id=thread_id or session.codex_thread_id,
+                event_callback=event_callback,
+                model=fallback_model,
+            )
+            raw_lines.extend(fallback_attempt.raw_lines)
+            final_return_code = fallback_attempt.return_code
+            thread_id = fallback_attempt.thread_id
+            if fallback_attempt.return_code == 0:
+                session.model = fallback_model
+
+        raw_log_path.write_text("".join(raw_lines), encoding="utf-8")
+
+        final_text = self._final_text(
+            final_message_path=final_message_path,
+            agent_messages=(
+                fallback_attempt.agent_messages
+                if fallback_attempt is not None
+                else attempt.agent_messages
+            ),
+            raw_lines=raw_lines,
+            return_code=final_return_code,
+        )
+
+        graceful_limit_message = self._limit_message_if_needed(
+            attempt=attempt,
+            fallback_attempt=fallback_attempt,
+            fallback_model=fallback_model,
+        )
+        if graceful_limit_message:
+            final_text = graceful_limit_message
+            final_return_code = 0
+
+        timed_out = fallback_attempt.timed_out if fallback_attempt is not None else attempt.timed_out
+        if timed_out:
+            final_text = (
+                f"Codex exceeded max_turn_seconds={self.config.max_turn_seconds} "
+                "and was stopped.\n\n"
+                + final_text
+            )
+
+        return CodexTurnResult(
+            text=final_text,
+            thread_id=thread_id,
+            return_code=final_return_code,
+            raw_log_path=raw_log_path,
+            final_message_path=final_message_path,
+        )
+
+    def _run_command(
+        self,
+        session_id: str,
+        command: list[str],
+        prompt: str,
+        working_dir: Path,
+        env: dict[str, str],
+        initial_thread_id: Optional[str],
+        event_callback: Optional[Callable[[dict], None]],
+        model: Optional[str],
+    ) -> _CodexAttempt:
         process = subprocess.Popen(
             command,
             cwd=str(working_dir),
-            env=command_env,
+            env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -77,9 +189,9 @@ class CodexRunner:
             bufsize=1,
         )
         with self._lock:
-            self._processes[session.id] = process
+            self._processes[session_id] = process
 
-        thread_id: Optional[str] = session.codex_thread_id
+        thread_id: Optional[str] = initial_thread_id
         agent_messages: list[str] = []
         raw_lines: list[str] = []
 
@@ -121,31 +233,16 @@ class CodexRunner:
             if process.stdout is not None:
                 process.stdout.close()
             with self._lock:
-                if self._processes.get(session.id) is process:
-                    self._processes.pop(session.id, None)
+                if self._processes.get(session_id) is process:
+                    self._processes.pop(session_id, None)
 
-        raw_log_path.write_text("".join(raw_lines), encoding="utf-8")
-
-        final_text = ""
-        if final_message_path.exists():
-            final_text = final_message_path.read_text(encoding="utf-8").strip()
-        if not final_text and agent_messages:
-            final_text = agent_messages[-1]
-        if not final_text:
-            final_text = self._fallback_text(raw_lines, return_code)
-        if timed_out:
-            final_text = (
-                f"Codex exceeded max_turn_seconds={self.config.max_turn_seconds} "
-                "and was stopped.\n\n"
-                + final_text
-            )
-
-        return CodexTurnResult(
-            text=final_text,
+        return _CodexAttempt(
             thread_id=thread_id,
             return_code=return_code,
-            raw_log_path=raw_log_path,
-            final_message_path=final_message_path,
+            raw_lines=raw_lines,
+            agent_messages=agent_messages,
+            timed_out=timed_out,
+            model=model,
         )
 
     def stop_session(self, session_id: str) -> bool:
@@ -165,7 +262,12 @@ class CodexRunner:
                 return True
         return False
 
-    def _build_command(self, session: Session, final_message_path: Path) -> list[str]:
+    def _build_command(
+        self,
+        session: Session,
+        final_message_path: Path,
+        override_model: Optional[str] = None,
+    ) -> list[str]:
         command = [self.config.binary]
         if session.codex_thread_id:
             command.extend(["exec", "resume"])
@@ -181,8 +283,9 @@ class CodexRunner:
             command.extend(["--cd", session.working_dir])
             for item in self.config.additional_writable_dirs:
                 command.extend(["--add-dir", str(item)])
-        if session.model:
-            command.extend(["--model", session.model])
+        resolved_model = self._resolve_model_alias(override_model or session.model)
+        if resolved_model:
+            command.extend(["--model", resolved_model])
         if session.reasoning_effort:
             command.extend(["-c", f'model_reasoning_effort="{session.reasoning_effort}"'])
         command.extend(["--output-last-message", str(final_message_path)])
@@ -190,6 +293,115 @@ class CodexRunner:
             command.append(session.codex_thread_id)
         command.append("-")
         return command
+
+    def _resolve_model_alias(self, model: Optional[str]) -> Optional[str]:
+        if not model:
+            return None
+        model = model.strip()
+        if not model:
+            return None
+        preset = self.config.model_presets.get(model)
+        if preset is not None:
+            return preset
+        preset = self.config.model_presets.get(model.lower())
+        return preset if preset is not None else model
+
+    def _fallback_model(self) -> str:
+        return (
+            self._resolve_model_alias(self.config.model_presets.get("fast"))
+            or self._resolve_model_alias("spark")
+            or "gpt-5.3-codex-spark"
+        )
+
+    def _should_try_fallback(self, attempt: _CodexAttempt, fallback_model: str) -> bool:
+        if attempt.return_code == 0 or attempt.timed_out:
+            return False
+        if not self._is_quota_or_rate_limit(attempt.raw_lines):
+            return False
+        return (attempt.model or "").strip().lower() != fallback_model.strip().lower()
+
+    def _limit_message_if_needed(
+        self,
+        attempt: _CodexAttempt,
+        fallback_attempt: Optional[_CodexAttempt],
+        fallback_model: str,
+    ) -> str:
+        if fallback_attempt is None:
+            if attempt.return_code != 0 and self._is_model_unavailable(attempt.raw_lines):
+                model = attempt.model or "the selected model"
+                return (
+                    f"{model} is not available for this Codex account right now. "
+                    "Please switch to an available model or another authenticated profile."
+                )
+            return ""
+        if fallback_attempt.return_code == 0:
+            return ""
+        if self._is_model_unavailable(fallback_attempt.raw_lines):
+            return (
+                "Your Codex quota for the active model appears to be exhausted or temporarily "
+                f"rate-limited. I tried {fallback_model} as a fallback, but this account cannot "
+                "use that model right now. Please wait for the quota reset or switch to another "
+                "authenticated profile."
+            )
+        if self._is_quota_or_rate_limit(fallback_attempt.raw_lines):
+            return (
+                "Your Codex quota for the active model appears to be exhausted or temporarily "
+                f"rate-limited. I also tried {fallback_model}, but that quota is unavailable too. "
+                "Please wait until the quota resets, switch to another authenticated profile, "
+                "or add credits before retrying."
+            )
+        return (
+            "Your Codex quota for the active model appears to be exhausted or temporarily "
+            f"rate-limited. I tried {fallback_model} as a fallback, but the fallback turn did not "
+            "complete. Please retry after the quota reset or switch to another authenticated profile."
+        )
+
+    @staticmethod
+    def _is_quota_or_rate_limit(raw_lines: list[str]) -> bool:
+        text = "\n".join(raw_lines).lower()
+        needles = (
+            "rate limit",
+            "rate_limit",
+            "limit reached",
+            "quota",
+            "usage limit",
+            "usage cap",
+            "too many requests",
+            "429",
+            "insufficient_quota",
+            "no credits",
+            "credit balance",
+        )
+        return any(needle in text for needle in needles)
+
+    @staticmethod
+    def _is_model_unavailable(raw_lines: list[str]) -> bool:
+        text = "\n".join(raw_lines).lower()
+        needles = (
+            "model is not supported",
+            "model_not_found",
+            "unsupported model",
+            "not supported when using codex",
+            "cannot use that model",
+            "not available for this account",
+        )
+        return any(needle in text for needle in needles)
+
+    @staticmethod
+    def _final_text(
+        final_message_path: Path,
+        agent_messages: list[str],
+        raw_lines: list[str],
+        return_code: int,
+    ) -> str:
+        final_text = ""
+        if final_message_path.exists():
+            final_text = final_message_path.read_text(encoding="utf-8").strip()
+        if not final_text and agent_messages:
+            final_text = agent_messages[-1]
+        if not final_text:
+            final_text = CodexRunner._fallback_text(raw_lines, return_code)
+        return final_text
 
     def _build_environment(
         self,

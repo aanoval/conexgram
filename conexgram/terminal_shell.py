@@ -615,10 +615,26 @@ class TerminalShell:
         finally:
             self.ui.finish_prompt()
 
+    def _resolve_model_alias(self, model: Optional[str]) -> Optional[str]:
+        if not model:
+            return None
+        model = model.strip()
+        if not model:
+            return None
+        preset = self.config.codex.model_presets.get(model)
+        if preset is not None:
+            return preset
+        preset = self.config.codex.model_presets.get(model.lower())
+        return preset if preset is not None else model
+
     def _prompt_meta_text(self) -> str:
         session = self._require_session()
         cwd = self._display_path(Path(session.working_dir))
-        model = session.model or self.config.codex.model or "codex default"
+        model = (
+            self._resolve_model_alias(session.model)
+            or self._resolve_model_alias(self.config.codex.model)
+            or "codex default"
+        )
         reasoning = session.reasoning_effort or self.config.codex.reasoning_effort or "default"
         return f"{model} {reasoning} · {cwd}"
 
@@ -775,7 +791,11 @@ class TerminalShell:
     def _prompt(self) -> str:
         session = self._require_session()
         cwd = self._display_path(Path(session.working_dir))
-        model = session.model or self.config.codex.model or "codex default"
+        model = (
+            self._resolve_model_alias(session.model)
+            or self._resolve_model_alias(self.config.codex.model)
+            or "codex default"
+        )
         reasoning = session.reasoning_effort or self.config.codex.reasoning_effort or "default"
         profile = self.active_profile()
         return self.ui.prompt(str(cwd), profile.id, session.mode, str(model), str(reasoning))
@@ -797,6 +817,10 @@ class TerminalShell:
     def _require_session(self) -> Session:
         if self.session is None:
             raise RuntimeError("No active CLI session.")
+        resolved_model = self._resolve_model_alias(self.session.model)
+        if resolved_model != self.session.model:
+            self.session.model = resolved_model
+            self.store.update(self.session)
         return self.session
 
     def _start_or_queue_turn(self, text: str) -> None:
@@ -1074,7 +1098,12 @@ class TerminalShell:
                 ("Codex thread", thread),
                 ("Workspace", session.working_dir),
                 ("Profile", self._profile_label(profile)),
-                ("Model", session.model or "Codex default"),
+                (
+                    "Model",
+                    self._resolve_model_alias(session.model)
+                    or self._resolve_model_alias(self.config.codex.model)
+                    or "Codex default",
+                ),
                 ("Reasoning", session.reasoning_effort or "Codex default"),
                 ("Mode", session.mode),
                 ("Turns", str(session.turn_count)),
@@ -1195,10 +1224,11 @@ class TerminalShell:
         if not args:
             return f"Current model: {session.model or 'Codex default'}"
         model = args[0].strip()
-        preset = self.config.codex.model_presets.get(model)
-        if preset is not None:
-            model = preset
-        session.model = None if model.lower() in {"default", "none", ""} else model
+        resolved_model = self._resolve_model_alias(model)
+        if model.lower() in {"default", "none", ""} or resolved_model is None:
+            session.model = None
+        else:
+            session.model = resolved_model
         self.store.update(session)
         return f"Model updated: {session.model or 'Codex default'}"
 

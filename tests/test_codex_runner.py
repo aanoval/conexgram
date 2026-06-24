@@ -125,6 +125,82 @@ class CodexRunnerTests(unittest.TestCase):
             self.assertEqual(result.text, "final text")
             self.assertEqual([event["type"] for event in events], ["thread.started", "turn.started"])
 
+    def test_run_turn_retries_with_spark_when_primary_model_hits_quota(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            script = work / "fake-codex"
+            script.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "args = sys.argv\n"
+                "out = args[args.index('--output-last-message') + 1]\n"
+                "model = args[args.index('--model') + 1] if '--model' in args else 'default'\n"
+                "if model == 'gpt-5.3-codex-spark':\n"
+                "    print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-spark'}), flush=True)\n"
+                "    open(out, 'w', encoding='utf-8').write('spark final')\n"
+                "    raise SystemExit(0)\n"
+                "print(json.dumps({'type': 'turn.failed', 'error': {'message': 'rate limit reached'}}), flush=True)\n"
+                "raise SystemExit(1)\n",
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+            config = CodexConfig(
+                binary=str(script),
+                default_working_dir=work,
+                model_presets={"fast": "gpt-5.3-codex-spark"},
+            )
+            runner = CodexRunner(config, work / "logs")
+            session = Session(
+                id="s1",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=str(work),
+                model="gpt-main",
+            )
+
+            result = runner.run_turn(session, "hello")
+
+            self.assertEqual(result.return_code, 0)
+            self.assertEqual(result.thread_id, "thread-spark")
+            self.assertEqual(result.text, "spark final")
+            self.assertEqual(session.model, "gpt-5.3-codex-spark")
+            self.assertIn('"type": "conexgram.fallback"', result.raw_log_path.read_text(encoding="utf-8"))
+
+    def test_run_turn_returns_natural_message_when_spark_quota_also_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            script = work / "fake-codex"
+            script.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json\n"
+                "print(json.dumps({'type': 'turn.failed', 'error': {'message': '429 Too Many Requests: quota exhausted'}}), flush=True)\n"
+                "raise SystemExit(1)\n",
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+            config = CodexConfig(
+                binary=str(script),
+                default_working_dir=work,
+                model_presets={"fast": "gpt-5.3-codex-spark"},
+            )
+            runner = CodexRunner(config, work / "logs")
+            session = Session(
+                id="s1",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=str(work),
+                model="gpt-main",
+            )
+
+            result = runner.run_turn(session, "hello")
+
+            self.assertEqual(result.return_code, 0)
+            self.assertIn("Your Codex quota", result.text)
+            self.assertIn("gpt-5.3-codex-spark", result.text)
+            self.assertNotIn("Codex exited with code", result.text)
+
 
 if __name__ == "__main__":
     unittest.main()

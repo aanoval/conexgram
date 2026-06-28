@@ -19,6 +19,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from .codex_index import CodexIndex, CodexThread
 from .config import AppConfig
 from .config import TelegramConfig, save_config
 from .session_store import ConnectedUser, Session, SessionStore
@@ -269,7 +270,7 @@ class CommandHandler:
         if command == "/status":
             return self.status(chat_id, user_id)
         if command == "/sessions":
-            return self.sessions(chat_id, user_id)
+            return self.sessions(chat_id, user_id, args)
         if command == "/switch":
             return self.switch(chat_id, user_id, args)
         if command == "/cwd":
@@ -481,13 +482,20 @@ class CommandHandler:
             f"- Updated: {session.updated_at}"
         )
 
-    def sessions(self, chat_id: int, user_id: int) -> str:
+    def sessions(self, chat_id: int, user_id: int, args: list[str]) -> Union[str, MessageCommandResponse]:
+        if args and args[0].lower() in {"local", "gateway"}:
+            return self._gateway_sessions(chat_id, user_id)
+        if args and args[0].isdigit():
+            return self._codex_workspace_threads(chat_id, user_id, int(args[0]))
+        return self._codex_workspaces(chat_id, user_id)
+
+    def _gateway_sessions(self, chat_id: int, user_id: int) -> str:
         scope_key = self.scope_key(chat_id, user_id)
         sessions = self.store.list_for_scope(scope_key)
         if not sessions:
             return "No sessions yet. Send /new to create one."
         active = self.store.get_active(scope_key)
-        lines = ["Sessions:"]
+        lines = ["Gateway sessions:"]
         for index, session in enumerate(sessions[:20], start=1):
             marker = "*" if active and active.id == session.id else " "
             thread = "started" if session.codex_thread_id else "fresh"
@@ -495,17 +503,178 @@ class CommandHandler:
                 f"{marker} {index}. {session.id[:8]} {thread} "
                 f"turns={session.turn_count} cwd={session.working_dir}"
             )
+        lines.append("Use /switch <number-or-id> for gateway sessions.")
         return "\n".join(lines)
+
+    def _codex_workspaces(self, chat_id: int, user_id: int) -> Union[str, MessageCommandResponse]:
+        index = self._codex_index(chat_id, user_id)
+        workspaces = index.list_workspaces(limit=20)
+        if not workspaces:
+            return (
+                "No Codex workspace metadata found for the active profile.\n"
+                "Use /sessions local to list Conexgram gateway sessions."
+            )
+        lines = ["Choose a Codex workspace:"]
+        keyboard: list[list[dict[str, str]]] = []
+        for number, workspace in enumerate(workspaces, start=1):
+            name = self._workspace_label(workspace.cwd)
+            lines.append(
+                f"{number}. {name}\n"
+                f"   {workspace.thread_count} threads, {self._format_tokens(workspace.total_tokens)} tokens\n"
+                f"   {workspace.cwd}"
+            )
+            keyboard.append([
+                {
+                    "text": f"{number}. {self._truncate(name, 36)}",
+                    "callback_data": f"/sessions {number}",
+                }
+            ])
+        lines.append("")
+        lines.append("Tap a workspace, or send /sessions <number>. Use /sessions local for gateway sessions.")
+        return MessageCommandResponse(
+            text="\n".join(lines),
+            reply_markup={"inline_keyboard": keyboard[:20]},
+        )
+
+    def _codex_workspace_threads(
+        self,
+        chat_id: int,
+        user_id: int,
+        workspace_number: int,
+    ) -> Union[str, MessageCommandResponse]:
+        index = self._codex_index(chat_id, user_id)
+        workspaces = index.list_workspaces(limit=20)
+        if workspace_number < 1 or workspace_number > len(workspaces):
+            return "Workspace not found. Send /sessions to list available Codex workspaces."
+        workspace = workspaces[workspace_number - 1]
+        threads = index.list_threads(workspace.cwd, limit=20)
+        if not threads:
+            return "No Codex threads found for this workspace."
+        lines = [
+            f"Choose a Codex session in {self._workspace_label(workspace.cwd)}:",
+            workspace.cwd,
+        ]
+        keyboard: list[list[dict[str, str]]] = []
+        for number, thread in enumerate(threads, start=1):
+            title = self._thread_title(thread)
+            lines.append(
+                f"{number}. {title}\n"
+                f"   {thread.id[:8]} | {self._format_tokens(thread.tokens_used)} tokens"
+                f" | {self._format_timestamp(thread.updated_at)}"
+            )
+            keyboard.append([
+                {
+                    "text": f"{number}. {self._truncate(title, 42)}",
+                    "callback_data": f"/switch codex {thread.id}",
+                }
+            ])
+        keyboard.append([
+            {"text": "Back to workspaces", "callback_data": "/sessions"},
+            {"text": "Gateway sessions", "callback_data": "/sessions local"},
+        ])
+        return MessageCommandResponse(
+            text="\n".join(lines),
+            reply_markup={"inline_keyboard": keyboard},
+        )
 
     def switch(self, chat_id: int, user_id: int, args: list[str]) -> str:
         if not args:
-            return "Usage: /switch <session-number-or-id>"
+            return "Usage: /switch <session-number-or-id> or /switch codex <thread-id>"
+        if args[0].lower() == "codex":
+            if len(args) < 2:
+                return "Usage: /switch codex <thread-id>"
+            return self._switch_codex_thread(chat_id, user_id, args[1])
         scope_key = self.scope_key(chat_id, user_id)
         session = self.store.find_for_scope(scope_key, args[0])
         if session is None:
             return "Session not found. Use /sessions to list available sessions."
         self.store.set_active(scope_key, session.id)
         return f"Switched to session {session.id}\nWorking directory: {session.working_dir}"
+
+    def _switch_codex_thread(self, chat_id: int, user_id: int, thread_id: str) -> str:
+        index = self._codex_index(chat_id, user_id)
+        thread = index.find_thread(thread_id)
+        if thread is None:
+            return "Codex thread not found in the active profile metadata."
+        cwd = Path(thread.cwd).expanduser().resolve()
+        if not cwd.exists() or not cwd.is_dir():
+            return f"Codex workspace folder no longer exists: {cwd}"
+        if not self._path_allowed(cwd):
+            return f"Codex workspace is outside configured workspace roots: {cwd}"
+
+        scope_key = self.scope_key(chat_id, user_id)
+        profile = self.active_profile(chat_id, user_id)
+        for session in self.store.list_for_scope(scope_key):
+            if session.codex_thread_id == thread.id and session.profile_id == profile.id:
+                session.working_dir = str(cwd)
+                session.title = self._thread_title(thread)
+                session.model = thread.model or session.model
+                session.reasoning_effort = thread.reasoning_effort or session.reasoning_effort
+                self.store.update(session)
+                self.store.set_active(scope_key, session.id)
+                return (
+                    f"Switched to Codex thread {thread.id}\n"
+                    f"Title: {session.title}\n"
+                    f"Workspace: {session.working_dir}"
+                )
+
+        session = self.store.create(
+            scope_key=scope_key,
+            chat_id=chat_id,
+            user_id=user_id,
+            working_dir=cwd,
+            model=thread.model or self.config.codex.model,
+            reasoning_effort=thread.reasoning_effort or self.config.codex.reasoning_effort,
+            mode=self.config.codex.mode,
+            fast_mode=self.config.codex.fast_mode,
+            title=self._thread_title(thread),
+            profile_id=profile.id,
+        )
+        session.codex_thread_id = thread.id
+        self.store.update(session)
+        return (
+            f"Switched to Codex thread {thread.id}\n"
+            f"Title: {session.title}\n"
+            f"Workspace: {session.working_dir}"
+        )
+
+    def _codex_index(self, chat_id: int, user_id: int) -> CodexIndex:
+        return CodexIndex(self.active_profile_home(chat_id, user_id))
+
+    @staticmethod
+    def _workspace_label(cwd: str) -> str:
+        path = Path(cwd)
+        return path.name or str(path)
+
+    @staticmethod
+    def _thread_title(thread: CodexThread) -> str:
+        title = " ".join((thread.title or "").split())
+        if title:
+            return title[:100]
+        preview = " ".join((thread.preview or "").split())
+        return preview[:100] or thread.id
+
+    @staticmethod
+    def _truncate(text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        return text[: max(1, limit - 3)].rstrip() + "..."
+
+    @staticmethod
+    def _format_tokens(tokens: int) -> str:
+        if tokens >= 1_000_000_000:
+            return f"{tokens / 1_000_000_000:.1f}B"
+        if tokens >= 1_000_000:
+            return f"{tokens / 1_000_000:.1f}M"
+        if tokens >= 1_000:
+            return f"{tokens / 1_000:.1f}K"
+        return str(tokens)
+
+    @staticmethod
+    def _format_timestamp(timestamp: int) -> str:
+        if timestamp <= 0:
+            return "unknown"
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
 
     def cwd(self, chat_id: int, user_id: int, args: list[str]) -> str:
         session = self.ensure_session(chat_id, user_id)
@@ -1205,8 +1374,10 @@ class CommandHandler:
             "/profile add <path> - register profile from another codex home path\n"
             "/new [working_dir] - start a fresh Codex session\n"
             "/status - show the active session\n"
-            "/sessions - list sessions\n"
-            "/switch <number_or_id> - switch active session\n"
+            "/sessions - browse Codex workspaces and threads\n"
+            "/sessions local - list Conexgram gateway sessions\n"
+            "/switch <number_or_id> - switch active gateway session\n"
+            "/switch codex <thread_id> - switch to a Codex metadata thread\n"
             "/cwd [path] - show or set cwd before Codex thread starts\n"
             "/model [name|default] - show or set model for this session\n"
             "/models - list configured model presets\n"

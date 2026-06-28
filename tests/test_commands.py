@@ -1,6 +1,7 @@
 import base64
 import json
 import io
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -50,6 +51,49 @@ def make_handler(tmp: str, max_upload_bytes: int = 1024) -> CommandHandler:
         config_path=root / "config.json",
     )
     return CommandHandler(config, SessionStore(root / "sessions.json"))
+
+
+def make_codex_state(profile_home: Path, rows: list[dict]) -> Path:
+    codex_dir = profile_home / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    db_path = codex_dir / "state_5.sqlite"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                cwd TEXT NOT NULL,
+                title TEXT NOT NULL,
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL,
+                archived INTEGER NOT NULL DEFAULT 0,
+                model TEXT,
+                reasoning_effort TEXT,
+                preview TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        for row in rows:
+            db.execute(
+                """
+                INSERT INTO threads (
+                    id, cwd, title, tokens_used, updated_at, archived,
+                    model, reasoning_effort, preview
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["cwd"],
+                    row["title"],
+                    row.get("tokens_used", 0),
+                    row.get("updated_at", int(time.time())),
+                    row.get("archived", 0),
+                    row.get("model"),
+                    row.get("reasoning_effort"),
+                    row.get("preview", ""),
+                ),
+            )
+    return db_path
 
 
 class CommandHandlerTests(unittest.TestCase):
@@ -123,6 +167,62 @@ class CommandHandlerTests(unittest.TestCase):
             assert isinstance(response, MessageCommandResponse)
             self.assertIn("Settings:", response.text)
             self.assertIsNotNone(response.reply_markup)
+
+    def test_sessions_browses_codex_workspaces_and_switches_thread(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "project-a"
+            work.mkdir()
+            profile_home = root / "profile-a"
+            make_fake_auth(profile_home, "dev@example.com", "Dev")
+            make_codex_state(
+                profile_home,
+                [
+                    {
+                        "id": "019thread-a",
+                        "cwd": str(work),
+                        "title": "Build project A",
+                        "tokens_used": 12345,
+                        "updated_at": 1800000000,
+                        "model": "gpt-test",
+                        "reasoning_effort": "high",
+                    }
+                ],
+            )
+            handler = make_handler(tmp)
+            profile = handler.store.register_profile_from_home(profile_home)
+            handler.store.set_active_profile(handler.scope_key(1, 2), profile.id)
+
+            workspaces = handler.handle_command("/sessions", 1, 2)
+
+            self.assertIsInstance(workspaces, MessageCommandResponse)
+            assert isinstance(workspaces, MessageCommandResponse)
+            self.assertIn("Choose a Codex workspace", workspaces.text)
+            self.assertIn("project-a", workspaces.text)
+            self.assertEqual(
+                workspaces.reply_markup["inline_keyboard"][0][0]["callback_data"],
+                "/sessions 1",
+            )
+
+            threads = handler.handle_command("/sessions 1", 1, 2)
+
+            self.assertIsInstance(threads, MessageCommandResponse)
+            assert isinstance(threads, MessageCommandResponse)
+            self.assertIn("Build project A", threads.text)
+            self.assertEqual(
+                threads.reply_markup["inline_keyboard"][0][0]["callback_data"],
+                "/switch codex 019thread-a",
+            )
+
+            switched = handler.handle_command("/switch codex 019thread-a", 1, 2)
+            session = handler.ensure_session(1, 2)
+
+            self.assertIn("Switched to Codex thread 019thread-a", switched)
+            self.assertEqual(session.codex_thread_id, "019thread-a")
+            self.assertEqual(session.working_dir, str(work.resolve()))
+            self.assertEqual(session.title, "Build project A")
+            self.assertEqual(session.model, "gpt-test")
+            self.assertEqual(session.reasoning_effort, "high")
 
     def test_codex_command_runs_native_binary_without_shell(self):
         with tempfile.TemporaryDirectory() as tmp:

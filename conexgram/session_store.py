@@ -75,6 +75,8 @@ class Session:
     mode: str = "safe"
     fast_mode: bool = False
     full_access: Optional[bool] = None
+    sandbox_mode: Optional[str] = None
+    approval_policy: Optional[str] = None
     typing_indicator: Optional[bool] = None
     progress_messages: Optional[bool] = None
     codex_thread_id: Optional[str] = None

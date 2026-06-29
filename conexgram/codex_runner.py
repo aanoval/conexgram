@@ -269,6 +269,8 @@ class CodexRunner:
         override_model: Optional[str] = None,
     ) -> list[str]:
         command = [self.config.binary]
+        if session.approval_policy and not self._should_use_full_access(session):
+            command.extend(["-a", session.approval_policy])
         if session.codex_thread_id:
             command.extend(["exec", "resume"])
         else:
@@ -279,6 +281,8 @@ class CodexRunner:
             command.append("--skip-git-repo-check")
         if self._should_use_full_access(session):
             command.append("--dangerously-bypass-approvals-and-sandbox")
+        elif session.sandbox_mode:
+            command.extend(["--sandbox", session.sandbox_mode])
         if not session.codex_thread_id:
             command.extend(["--cd", session.working_dir])
             for item in self.config.additional_writable_dirs:

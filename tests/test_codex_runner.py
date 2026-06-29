@@ -59,6 +59,31 @@ class CodexRunnerTests(unittest.TestCase):
             self.assertNotIn("--reasoning-effort", command)
             self.assertNotIn("model_reasoning_effort", " ".join(command))
 
+    def test_build_command_includes_sandbox_and_approval_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = CodexConfig(
+                binary="codex",
+                default_working_dir=Path(tmp),
+                max_turn_seconds=60,
+            )
+            runner = CodexRunner(config, Path(tmp) / "logs")
+            session = Session(
+                id="s1",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=tmp,
+                sandbox_mode="workspace-write",
+                approval_policy="on-request",
+            )
+
+            command = runner._build_command(session, Path(tmp) / "final.txt")
+
+            self.assertEqual(command[:4], ["codex", "-a", "on-request", "exec"])
+            self.assertIn("--sandbox", command)
+            self.assertIn("workspace-write", command)
+            self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
+
     def test_resume_prompt_includes_gateway_file_protocol(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = CodexRunner(CodexConfig(binary="codex", default_working_dir=Path(tmp)), Path(tmp) / "logs")

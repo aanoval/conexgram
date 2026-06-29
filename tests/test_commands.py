@@ -156,6 +156,54 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertEqual(response, "Computer Access enabled for this session.")
             self.assertTrue(session.full_access)
             self.assertEqual(session.mode, "full")
+            self.assertEqual(session.sandbox_mode, "danger-full-access")
+
+    def test_sandbox_menu_and_workspace_write_update_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+
+            menu = handler.handle_command("/sandbox", 1, 2)
+            response = handler.handle_command("/sandbox workspace-write", 1, 2)
+            session = handler.ensure_session(1, 2)
+
+            self.assertIsInstance(menu, MessageCommandResponse)
+            assert isinstance(menu, MessageCommandResponse)
+            self.assertIn("Sandbox:", menu.text)
+            self.assertEqual(response, "Sandbox updated: workspace-write")
+            self.assertEqual(session.sandbox_mode, "workspace-write")
+            self.assertEqual(session.mode, "workspace")
+            self.assertFalse(session.full_access)
+
+    def test_sandbox_danger_full_access_requires_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+
+            response = handler.handle_command("/sandbox danger-full-access", 1, 2)
+            session = handler.ensure_session(1, 2)
+
+            self.assertIn("/confirm sandbox", response)
+            self.assertIsNone(session.sandbox_mode)
+
+            confirmed = handler.handle_command("/confirm sandbox", 1, 2)
+
+            self.assertEqual(confirmed, "Sandbox updated: danger-full-access for this session.")
+            self.assertEqual(session.sandbox_mode, "danger-full-access")
+            self.assertTrue(session.full_access)
+            self.assertEqual(session.mode, "full")
+
+    def test_approval_menu_and_policy_update_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+
+            menu = handler.handle_command("/approval", 1, 2)
+            response = handler.handle_command("/approval on-request", 1, 2)
+            session = handler.ensure_session(1, 2)
+
+            self.assertIsInstance(menu, MessageCommandResponse)
+            assert isinstance(menu, MessageCommandResponse)
+            self.assertIn("Approval policy:", menu.text)
+            self.assertEqual(response, "Approval policy updated: on-request")
+            self.assertEqual(session.approval_policy, "on-request")
 
     def test_settings_returns_inline_keyboard(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -166,6 +214,8 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIsInstance(response, MessageCommandResponse)
             assert isinstance(response, MessageCommandResponse)
             self.assertIn("Settings:", response.text)
+            self.assertIn("Sandbox:", response.text)
+            self.assertIn("Approval:", response.text)
             self.assertIsNotNone(response.reply_markup)
 
     def test_sessions_browses_codex_workspaces_and_switches_thread(self):

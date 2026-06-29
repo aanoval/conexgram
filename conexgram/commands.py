@@ -283,6 +283,10 @@ class CommandHandler:
             return self.reasoning(chat_id, user_id, args)
         if command == "/mode":
             return self.mode(chat_id, user_id, args)
+        if command == "/sandbox":
+            return self.sandbox(chat_id, user_id, args)
+        if command == "/approval":
+            return self.approval(chat_id, user_id, args)
         if command == "/preset":
             return self.preset(chat_id, user_id, args)
         if command == "/fast":
@@ -475,6 +479,8 @@ class CommandHandler:
             f"- Model: {session.model or 'Codex default'}\n"
             f"- Reasoning: {session.reasoning_effort or 'Codex default'}\n"
             f"- Mode: {session.mode}\n"
+            f"- Sandbox: {session.sandbox_mode or 'Codex default'}\n"
+            f"- Approval: {session.approval_policy or 'Codex default'}\n"
             f"- Fast mode: {'on' if session.fast_mode else 'off'}\n"
             f"- Typing indicator: {'on' if self._effective_bool(session.typing_indicator, self.config.progress.typing_indicator) else 'off'}\n"
             f"- Progress messages: {'on' if self._effective_bool(session.progress_messages, self.config.progress.progress_messages) else 'off'}\n"
@@ -759,6 +765,114 @@ class CommandHandler:
         self.store.update(session)
         return f"Mode updated: {value}"
 
+    def sandbox(self, chat_id: int, user_id: int, args: list[str]) -> Union[str, MessageCommandResponse]:
+        session = self.ensure_session(chat_id, user_id)
+        if not args or args[0].lower() in {"status", "menu"}:
+            current = session.sandbox_mode or "Codex default"
+            text = (
+                "Sandbox:\n"
+                f"- Current: {current}\n"
+                "- read-only: Codex can inspect files but not write.\n"
+                "- workspace-write: Codex can write inside configured workspaces.\n"
+                "- danger-full-access: broad local access, requires confirmation."
+            )
+            return MessageCommandResponse(
+                text=text,
+                reply_markup={
+                    "inline_keyboard": [
+                        [
+                            {"text": "Read only", "callback_data": "/sandbox read-only"},
+                            {"text": "Workspace write", "callback_data": "/sandbox workspace-write"},
+                        ],
+                        [
+                            {"text": "Full access", "callback_data": "/sandbox danger-full-access"},
+                            {"text": "Default", "callback_data": "/sandbox default"},
+                        ],
+                    ]
+                },
+            )
+        value = args[0].lower()
+        aliases = {
+            "readonly": "read-only",
+            "read": "read-only",
+            "safe": "read-only",
+            "workspace": "workspace-write",
+            "write": "workspace-write",
+            "work": "workspace-write",
+            "full": "danger-full-access",
+            "danger": "danger-full-access",
+            "danger-full": "danger-full-access",
+        }
+        value = aliases.get(value, value)
+        if value in {"default", "none", "off"}:
+            session.sandbox_mode = None
+            self.store.update(session)
+            return "Sandbox updated: Codex default"
+        if value not in {"read-only", "workspace-write", "danger-full-access"}:
+            return "Usage: /sandbox default|read-only|workspace-write|danger-full-access"
+        if value == "danger-full-access":
+            if not self.config.codex.allow_runtime_full_access:
+                return "Danger full access is disabled in config."
+            return (
+                "Danger full access gives Codex broad local machine access.\n"
+                "Send /confirm sandbox to enable it for this session."
+            )
+        session.sandbox_mode = value
+        if value == "read-only":
+            session.full_access = False
+            session.mode = "safe"
+        elif value == "workspace-write":
+            session.full_access = False
+            session.mode = "workspace"
+        self.store.update(session)
+        return f"Sandbox updated: {value}"
+
+    def approval(self, chat_id: int, user_id: int, args: list[str]) -> Union[str, MessageCommandResponse]:
+        session = self.ensure_session(chat_id, user_id)
+        if not args or args[0].lower() in {"status", "menu"}:
+            current = session.approval_policy or "Codex default"
+            text = (
+                "Approval policy:\n"
+                f"- Current: {current}\n"
+                "- untrusted: ask before commands outside the trusted set.\n"
+                "- on-request: let Codex request approval when needed.\n"
+                "- never: never ask; failures are returned to Codex."
+            )
+            return MessageCommandResponse(
+                text=text,
+                reply_markup={
+                    "inline_keyboard": [
+                        [
+                            {"text": "Untrusted", "callback_data": "/approval untrusted"},
+                            {"text": "On request", "callback_data": "/approval on-request"},
+                        ],
+                        [
+                            {"text": "Never", "callback_data": "/approval never"},
+                            {"text": "Default", "callback_data": "/approval default"},
+                        ],
+                    ]
+                },
+            )
+        value = args[0].lower()
+        aliases = {
+            "ask": "on-request",
+            "request": "on-request",
+            "onrequest": "on-request",
+            "untrust": "untrusted",
+            "off": "default",
+            "none": "default",
+        }
+        value = aliases.get(value, value)
+        if value in {"default", "none", "off"}:
+            session.approval_policy = None
+            self.store.update(session)
+            return "Approval policy updated: Codex default"
+        if value not in {"never", "untrusted", "on-request", "on-failure"}:
+            return "Usage: /approval default|never|untrusted|on-request|on-failure"
+        session.approval_policy = value
+        self.store.update(session)
+        return f"Approval policy updated: {value}"
+
     def preset(self, chat_id: int, user_id: int, args: list[str]) -> str:
         if not args or args[0].lower() in {"list", "status"}:
             if not self.config.codex.presets:
@@ -825,13 +939,23 @@ class CommandHandler:
         return response.replace("Full access", "Computer Access").replace("full access", "Computer Access")
 
     def confirm(self, chat_id: int, user_id: int, args: list[str]) -> str:
-        if not args or args[0].lower() != "computer":
-            return "Usage: /confirm computer"
+        if not args or args[0].lower() not in {"computer", "sandbox"}:
+            return "Usage: /confirm computer|sandbox"
+        if args[0].lower() == "sandbox":
+            if not self.config.codex.allow_runtime_full_access:
+                return "Danger full access is disabled in config."
+            session = self.ensure_session(chat_id, user_id)
+            session.sandbox_mode = "danger-full-access"
+            session.full_access = True
+            session.mode = "full"
+            self.store.update(session)
+            return "Sandbox updated: danger-full-access for this session."
         if not self.config.codex.allow_runtime_full_access:
             return "Computer Access is disabled in config."
         session = self.ensure_session(chat_id, user_id)
         session.full_access = True
         session.mode = "full"
+        session.sandbox_mode = "danger-full-access"
         self.store.update(session)
         return "Computer Access enabled for this session."
 
@@ -986,6 +1110,8 @@ class CommandHandler:
         return (
             "Permissions:\n"
             f"- Mode: {session.mode}\n"
+            f"- Sandbox: {session.sandbox_mode or 'Codex default'}\n"
+            f"- Approval: {session.approval_policy or 'Codex default'}\n"
             f"- Full access: {'on' if self._session_full_access(session) else 'off'}\n"
             f"- Runtime full access allowed: {self.config.codex.allow_runtime_full_access}\n"
             f"- Current workspace: {session.working_dir}\n"
@@ -1002,11 +1128,13 @@ class CommandHandler:
             f"1. Model: {session.model or 'Codex default'}\n"
             f"2. Reasoning: {session.reasoning_effort or 'Codex default'}\n"
             f"3. Mode: {session.mode}\n"
-            f"4. Computer Access: {'on' if self._session_full_access(session) else 'off'}\n"
-            f"5. Typing: {'on' if typing else 'off'}\n"
-            f"6. Progress text: {'on' if progress else 'off'}\n"
-            f"7. Workspace: {session.working_dir}\n\n"
-            "Commands: /model, /reasoning, /mode, /preset, /computer, /typing, /progress, /workspace"
+            f"4. Sandbox: {session.sandbox_mode or 'Codex default'}\n"
+            f"5. Approval: {session.approval_policy or 'Codex default'}\n"
+            f"6. Computer Access: {'on' if self._session_full_access(session) else 'off'}\n"
+            f"7. Typing: {'on' if typing else 'off'}\n"
+            f"8. Progress text: {'on' if progress else 'off'}\n"
+            f"9. Workspace: {session.working_dir}\n\n"
+            "Commands: /model, /reasoning, /mode, /sandbox, /approval, /preset, /computer, /typing, /progress, /workspace"
         )
         keyboard = {
             "inline_keyboard": [
@@ -1018,6 +1146,10 @@ class CommandHandler:
                 [
                     {"text": "Power", "callback_data": "/preset power"},
                     {"text": "Computer", "callback_data": "/computer on"},
+                ],
+                [
+                    {"text": "Sandbox", "callback_data": "/sandbox"},
+                    {"text": "Approval", "callback_data": "/approval"},
                 ],
                 [
                     {"text": "Typing On", "callback_data": "/typing on"},
@@ -1093,6 +1225,8 @@ class CommandHandler:
             f"- Working directory: {session.working_dir}\n"
             f"- Model: {session.model or 'Codex default'}\n"
             f"- Reasoning: {session.reasoning_effort or 'Codex default'}\n"
+            f"- Sandbox: {session.sandbox_mode or 'Codex default'}\n"
+            f"- Approval: {session.approval_policy or 'Codex default'}\n"
             f"- Turns: {session.turn_count}\n"
             f"- Last message: {session.last_message_at or 'none'}"
         )
@@ -1383,11 +1517,13 @@ class CommandHandler:
             "/models - list configured model presets\n"
             "/reasoning default|low|medium|high|xhigh - set reasoning effort\n"
             "/mode safe|workspace|full|<preset> - set execution mode\n"
+            "/sandbox default|read-only|workspace-write|danger-full-access - set Codex sandbox\n"
+            "/approval default|never|untrusted|on-request - set Codex approval policy\n"
             "/preset list|safe|work|fast|power|computer - apply a common setup\n"
             "/fast on|off - toggle fast mode\n"
             "/fullaccess status|on|off - inspect or toggle full access if config allows it\n"
             "/computer status|on|off - user-friendly alias for full access\n"
-            "/confirm computer - confirm enabling Computer Access\n"
+            "/confirm computer|sandbox - confirm enabling broad local access\n"
             "/workspace [list|switch <path-or-number>|<path>] - show or set workspace\n"
             "/invite - generate a one-time 5-minute invite code (owner only)\n"
             "/revoke <telegram_id_or_chat_id> - remove access (owner only)\n"

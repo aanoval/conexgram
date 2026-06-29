@@ -513,6 +513,21 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIn("alt", response)
             self.assertIn("alt@example.com", response)
 
+    def test_profile_add_without_path_scans_default_profile_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            handler = make_handler(tmp)
+            profile_root = root / ".codex-profiles"
+            profile_home = profile_root / "auto-profile"
+            make_fake_auth(profile_home, "auto@example.com", "Auto Profile")
+            handler.store.profile_root = profile_root
+
+            response = handler.handle_command("/profile add", 1, 2)
+
+            self.assertIn("Profiles added/updated from the default Conexgram profile directory", response)
+            self.assertIn("auto@example.com", response)
+            self.assertIsNotNone(handler.store.find_profile("auto"))
+
     def test_profile_switch_clears_other_profile_threads(self):
         with tempfile.TemporaryDirectory() as tmp:
             handler = make_handler(tmp)

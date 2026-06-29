@@ -389,7 +389,7 @@ class CommandHandler:
             return self.profile_status(chat_id, user_id)
         if action == "add":
             if len(args) < 2:
-                return "Usage: /profile add <path>"
+                return self._profile_add_default()
             home = Path(" ".join(args[1:])).expanduser().resolve()
             if not home.exists():
                 return f"Profile home directory not found: {home}"
@@ -407,6 +407,47 @@ class CommandHandler:
                 return "Usage: /profile switch <id|email|name>"
             return self.profile_switch(chat_id, user_id, " ".join(args[1:]))
         return "Usage: /profile [list|current|switch|add]"
+
+    def _profile_add_default(self) -> str:
+        profile_root = self.store.profile_root
+        candidates: list[Path] = []
+        if profile_root.exists():
+            candidates.extend(sorted(item for item in profile_root.iterdir() if item.is_dir()))
+
+        registered = []
+        errors = []
+        for home in candidates:
+            try:
+                profile = self.store.register_profile_from_home(home)
+            except ValueError:
+                continue
+            except Exception as exc:
+                errors.append(f"- {home}: {exc}")
+                continue
+            registered.append(profile)
+
+        if not registered:
+            message = (
+                "No Codex profiles found in the default Conexgram profile directory.\n"
+                f"Default directory: {profile_root}\n"
+                "Use /codexlogin to create one, or /profile add <path> for a custom profile."
+            )
+            if errors:
+                message += "\n\nScan errors:\n" + "\n".join(errors[:5])
+            return message
+
+        lines = [
+            "Profiles added/updated from the default Conexgram profile directory:",
+            f"Default directory: {profile_root}",
+        ]
+        for profile in registered:
+            lines.append(f"- {profile.id} | {profile.display_name} | {profile.email}")
+        lines.append("Use /profile list or /profile switch <id|email|name>.")
+        if errors:
+            lines.append("")
+            lines.append("Some profile directories could not be scanned:")
+            lines.extend(errors[:5])
+        return "\n".join(lines)
 
     def profile_list(self, chat_id: int, user_id: int) -> str:
         scope_key = self.scope_key(chat_id, user_id)
@@ -1505,7 +1546,7 @@ class CommandHandler:
             "/profile list - list available Codex auth profiles\n"
             "/profile current - show active Codex profile\n"
             "/profile switch <id|email|name> - switch active profile\n"
-            "/profile add <path> - register profile from another codex home path\n"
+            "/profile add [path] - auto-scan default profiles or register a custom profile path\n"
             "/new [working_dir] - start a fresh Codex session\n"
             "/status - show the active session\n"
             "/sessions - browse Codex workspaces and threads\n"

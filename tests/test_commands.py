@@ -218,6 +218,46 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIn("Approval:", response.text)
             self.assertIsNotNone(response.reply_markup)
 
+    def test_help_returns_interactive_menu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+
+            response = handler.handle_command("/help", 1, 2)
+
+            self.assertIsInstance(response, MessageCommandResponse)
+            assert isinstance(response, MessageCommandResponse)
+            self.assertIn("Conexgram command menu", response.text)
+            self.assertEqual(
+                response.reply_markup["inline_keyboard"][0][0]["callback_data"],
+                "/help session",
+            )
+
+    def test_help_category_returns_command_buttons(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+
+            response = handler.handle_command("/help model", 1, 2)
+
+            self.assertIsInstance(response, MessageCommandResponse)
+            assert isinstance(response, MessageCommandResponse)
+            self.assertIn("Model & Mode commands:", response.text)
+            self.assertIn("/settings", response.text)
+            self.assertEqual(
+                response.reply_markup["inline_keyboard"][0][0]["callback_data"],
+                "/settings",
+            )
+
+    def test_help_command_detail_does_not_run_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+
+            response = handler.handle_command("/help cmd reset", 1, 2)
+
+            self.assertIsInstance(response, MessageCommandResponse)
+            assert isinstance(response, MessageCommandResponse)
+            self.assertIn("/reset", response.text)
+            self.assertEqual(len(handler.store.list_for_scope(handler.scope_key(1, 2))), 0)
+
     def test_sessions_browses_codex_workspaces_and_switches_thread(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

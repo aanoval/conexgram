@@ -46,6 +46,109 @@ class ProfileCommandResponse:
 
 class CommandHandler:
     _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+    _HELP_SECTIONS = {
+        "session": {
+            "title": "Session",
+            "commands": [
+                ("/status", "Show the active session.", "/status"),
+                ("/new", "Start a fresh Codex session.", "/help cmd new"),
+                ("/sessions", "Browse Codex workspaces and threads.", "/sessions"),
+                ("/switch", "Switch active gateway or Codex metadata session.", "/help cmd switch"),
+                ("/summary", "Show active session summary.", "/summary"),
+                ("/rename", "Rename active session.", "/help cmd rename"),
+                ("/reset", "Start a fresh default session.", "/help cmd reset"),
+                ("/stop", "Stop the currently running Codex process.", "/help cmd stop"),
+            ],
+        },
+        "workspace": {
+            "title": "Workspace",
+            "commands": [
+                ("/cwd", "Show or set cwd before Codex thread starts.", "/cwd"),
+                ("/workspace", "Show or set allowed workspace.", "/workspace"),
+                ("/sendfile", "Send a local file to Telegram.", "/help cmd sendfile"),
+            ],
+        },
+        "model": {
+            "title": "Model & Mode",
+            "commands": [
+                ("/settings", "Open friendly settings panel.", "/settings"),
+                ("/model", "Show or set model for this session.", "/model"),
+                ("/models", "List configured model presets.", "/models"),
+                ("/reasoning", "Set reasoning effort.", "/help cmd reasoning"),
+                ("/mode", "Set execution mode.", "/help cmd mode"),
+                ("/preset", "Apply a common setup.", "/preset list"),
+                ("/fast", "Toggle fast mode.", "/fast"),
+            ],
+        },
+        "access": {
+            "title": "Access & Safety",
+            "commands": [
+                ("/permissions", "Show effective access settings.", "/permissions"),
+                ("/sandbox", "Choose Codex sandbox.", "/sandbox"),
+                ("/approval", "Choose Codex approval policy.", "/approval"),
+                ("/computer", "Inspect or toggle broad local access.", "/computer status"),
+                ("/fullaccess", "Inspect or toggle full access.", "/fullaccess status"),
+                ("/confirm", "Confirm a broad access change.", "/help cmd confirm"),
+            ],
+        },
+        "profile": {
+            "title": "Profiles",
+            "commands": [
+                ("/profile current", "Show active Codex auth profile.", "/profile current"),
+                ("/profile list", "List available Codex auth profiles.", "/profile list"),
+                ("/profile add", "Auto-scan default profiles.", "/profile add"),
+                ("/profile switch", "Switch active profile.", "/help cmd profile-switch"),
+                ("/codexlogin", "Start Codex device-auth flow.", "/codexlogin"),
+            ],
+        },
+        "users": {
+            "title": "Users",
+            "commands": [
+                ("/users", "List authorized users.", "/users"),
+                ("/invite", "Generate a one-time 5-minute invite code.", "/invite"),
+                ("/revoke", "Remove access.", "/help cmd revoke"),
+            ],
+        },
+        "diagnostics": {
+            "title": "Diagnostics",
+            "commands": [
+                ("/quota", "Show Codex usage and rate-limit status.", "/quota"),
+                ("/codexstatus", "Alias for /quota.", "/codexstatus"),
+                ("/tail", "Show latest Codex output for this session.", "/tail"),
+                ("/logs", "Send a local log file.", "/help cmd logs"),
+                ("/doctor", "Run setup checks.", "/doctor"),
+                ("/version", "Show local versions.", "/version"),
+                ("/config", "Show gateway config summary.", "/config"),
+            ],
+        },
+        "native": {
+            "title": "Native Codex",
+            "commands": [
+                ("/codex", "Run a native Codex CLI command.", "/help cmd codex"),
+                ("/typing", "Control typing indicator.", "/help cmd typing"),
+                ("/progress", "Control progress messages.", "/help cmd progress"),
+                ("/silent", "Quickly silence or restore progress UX.", "/help cmd silent"),
+            ],
+        },
+    }
+    _HELP_COMMAND_DETAILS = {
+        "new": "/new [working_dir]\nStart a fresh Codex session. Without a path, it uses the configured default workspace.",
+        "switch": "/switch <number_or_id>\n/switch codex <thread_id>\nSwitch active gateway session or a Codex metadata thread.",
+        "rename": "/rename <title>\nRename the active session.",
+        "reset": "/reset\nStart a fresh default session.",
+        "stop": "/stop\nStop the currently running Codex process.",
+        "sendfile": "/sendfile <path> [caption]\nSend a local file to Telegram when the path is inside configured workspace roots.",
+        "reasoning": "/reasoning default|low|medium|high|xhigh\nSet reasoning effort for this session.",
+        "mode": "/mode safe|workspace|full|<preset>\nSet execution mode for this session.",
+        "confirm": "/confirm computer|sandbox\nConfirm enabling broad local access.",
+        "profile-switch": "/profile switch <id|email|name>\nSwitch active Codex auth profile.",
+        "revoke": "/revoke <telegram_id_or_chat_id>\nRemove access. Owner only.",
+        "logs": "/logs [gateway|launchd]\nSend a local log file.",
+        "codex": "/codex <args>\nRun a native Codex CLI command through the active Conexgram profile.",
+        "typing": "/typing status|on|off|default\nControl typing indicator for this session.",
+        "progress": "/progress status|on|off|default\nControl long-running progress messages.",
+        "silent": "/silent status|on|off|default\nQuickly silence or restore progress UX.",
+    }
 
     def __init__(self, config: AppConfig, store: SessionStore) -> None:
         self.config = config
@@ -262,7 +365,7 @@ class CommandHandler:
         args = parts[1:]
 
         if command in {"/start", "/help"}:
-            return self.help_text()
+            return self.help(args)
         if command == "/profile":
             return self.profile(chat_id, user_id, args)
         if command == "/new":
@@ -1538,6 +1641,75 @@ class CommandHandler:
         if caption and len(caption) > 1024:
             caption = caption[:1021] + "..."
         return FileCommandResponse(path=requested, caption=caption)
+
+    def help(self, args: list[str]) -> MessageCommandResponse:
+        if args:
+            key = args[0].lower()
+            if key == "cmd" and len(args) > 1:
+                return self._help_command(args[1].lower())
+            if key in self._HELP_SECTIONS:
+                return self._help_section(key)
+        keyboard = [
+            [
+                {"text": "Session", "callback_data": "/help session"},
+                {"text": "Workspace", "callback_data": "/help workspace"},
+            ],
+            [
+                {"text": "Model", "callback_data": "/help model"},
+                {"text": "Access", "callback_data": "/help access"},
+            ],
+            [
+                {"text": "Profiles", "callback_data": "/help profile"},
+                {"text": "Users", "callback_data": "/help users"},
+            ],
+            [
+                {"text": "Diagnostics", "callback_data": "/help diagnostics"},
+                {"text": "Native Codex", "callback_data": "/help native"},
+            ],
+            [
+                {"text": "Settings", "callback_data": "/settings"},
+                {"text": "Sessions", "callback_data": "/sessions"},
+            ],
+            [
+                {"text": "Status", "callback_data": "/status"},
+                {"text": "Quota", "callback_data": "/quota"},
+            ],
+        ]
+        return MessageCommandResponse(
+            text=(
+                "Conexgram command menu\n\n"
+                "Choose a category below, or send any non-command message to the active Codex session."
+            ),
+            reply_markup={"inline_keyboard": keyboard},
+        )
+
+    def _help_section(self, key: str) -> MessageCommandResponse:
+        section = self._HELP_SECTIONS[key]
+        lines = [f"{section['title']} commands:"]
+        keyboard = []
+        row = []
+        for command, description, callback in section["commands"]:
+            lines.append(f"{command} - {description}")
+            row.append({"text": command, "callback_data": callback})
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        keyboard.append([{"text": "Back to help", "callback_data": "/help"}])
+        return MessageCommandResponse(
+            text="\n".join(lines),
+            reply_markup={"inline_keyboard": keyboard},
+        )
+
+    def _help_command(self, key: str) -> MessageCommandResponse:
+        detail = self._HELP_COMMAND_DETAILS.get(key)
+        if detail is None:
+            return self.help([])
+        return MessageCommandResponse(
+            text=detail,
+            reply_markup={"inline_keyboard": [[{"text": "Back to help", "callback_data": "/help"}]]},
+        )
 
     @staticmethod
     def help_text() -> str:

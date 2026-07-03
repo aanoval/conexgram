@@ -168,20 +168,10 @@ class GatewayApp:
         if isinstance(command_response, ProfileCommandResponse):
             for session_id in command_response.stop_session_ids:
                 self.codex.stop_session(session_id)
-            self._send(
-                message.chat_id,
-                command_response.text,
-                message.message_id,
-                reply_markup=command_response.reply_markup,
-            )
+            self._respond_command(message, command_response.text, command_response.reply_markup)
             return
         if isinstance(command_response, MessageCommandResponse):
-            self._send(
-                message.chat_id,
-                command_response.text,
-                message.message_id,
-                reply_markup=command_response.reply_markup,
-            )
+            self._respond_command(message, command_response.text, command_response.reply_markup)
             return
         if command_response is not None:
             self._send(message.chat_id, command_response, message.message_id)
@@ -377,6 +367,47 @@ class GatewayApp:
             except TelegramApiError as exc:
                 LOG.warning("Failed to send Telegram message: %s", exc)
             reply_markup = None
+
+    def _respond_command(
+        self,
+        message: TelegramMessage,
+        text: str,
+        reply_markup: Optional[dict] = None,
+    ) -> None:
+        if (
+            message.callback_query_id
+            and reply_markup is not None
+            and len(text) <= self.config.gateway.max_telegram_message_chars
+            and self._edit_callback_message(message.chat_id, message.message_id, text, reply_markup)
+        ):
+            return
+        self._send(
+            message.chat_id,
+            text,
+            message.message_id,
+            reply_markup=reply_markup,
+        )
+
+    def _edit_callback_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: Optional[dict] = None,
+    ) -> bool:
+        try:
+            self.telegram.edit_message_text(
+                chat_id,
+                message_id,
+                text,
+                reply_markup=reply_markup,
+            )
+            return True
+        except TelegramApiError as exc:
+            if "message is not modified" in str(exc).lower():
+                return True
+            LOG.warning("Failed to edit Telegram callback message: %s", exc)
+            return False
 
     def _send_file(
         self,

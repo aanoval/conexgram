@@ -82,6 +82,23 @@ class TelegramClient:
             payload["reply_markup"] = reply_markup
         self._request("sendMessage", payload, timeout=30)
 
+    def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: Optional[dict[str, Any]] = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        self._request("editMessageText", payload, timeout=30)
+
     def answer_callback_query(self, callback_query_id: str) -> None:
         self._request("answerCallbackQuery", {"callback_query_id": callback_query_id}, timeout=15)
 

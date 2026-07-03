@@ -3,6 +3,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import Optional
 
 from conexgram.app import AttachmentDirective, GatewayApp
 from conexgram.commands import FileCommandResponse
@@ -21,6 +22,30 @@ def make_app(tmp: str, max_upload_bytes: int = 1024) -> GatewayApp:
         config_path=root / "config.json",
     )
     return GatewayApp(config)
+
+
+class FakeTelegram:
+    def __init__(self) -> None:
+        self.sent: list[tuple[int, str, Optional[int], Optional[dict]]] = []
+        self.edited: list[tuple[int, int, str, Optional[dict]]] = []
+
+    def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[dict] = None,
+    ) -> None:
+        self.sent.append((chat_id, text, reply_to_message_id, reply_markup))
+
+    def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: Optional[dict] = None,
+    ) -> None:
+        self.edited.append((chat_id, message_id, text, reply_markup))
 
 
 class GatewayAppTests(unittest.TestCase):
@@ -144,6 +169,29 @@ class GatewayAppTests(unittest.TestCase):
             self.assertIn("tolong cek status project ini", queued.text)
             self.assertIn("Use the transcript as the user's voice instruction/context.", queued.text)
             self.assertIn("No caption was provided. Treat the audio transcript as the latest user message", queued.text)
+
+    def test_callback_menu_response_edits_original_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            fake = FakeTelegram()
+            app.telegram = fake  # type: ignore[assignment]
+
+            app._handle_message(TelegramMessage(
+                update_id=1,
+                message_id=77,
+                chat_id=1,
+                user_id=2,
+                text="/help model",
+                callback_query_id="callback-1",
+            ))
+
+            self.assertEqual(fake.sent, [])
+            self.assertEqual(len(fake.edited), 1)
+            chat_id, message_id, text, reply_markup = fake.edited[0]
+            self.assertEqual(chat_id, 1)
+            self.assertEqual(message_id, 77)
+            self.assertIn("Model & Mode commands:", text)
+            self.assertIsNotNone(reply_markup)
 
     def test_cleanup_uploads_deletes_expired_files_only(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -434,6 +435,39 @@ class SessionStore:
             if selector in profile.display_name.lower():
                 return profile
         return None
+
+    def reset_conexgram_profiles(self) -> tuple[int, int]:
+        with self._lock:
+            removed_profiles = len(self.profiles)
+            removed_dirs = 0
+            profile_root = self.profile_root.resolve()
+            for profile in list(self.profiles.values()):
+                home = expand_path(profile.home_dir)
+                try:
+                    resolved_home = home.resolve()
+                except OSError:
+                    resolved_home = home
+                if resolved_home == profile_root:
+                    continue
+                if profile_root in resolved_home.parents and resolved_home.exists():
+                    shutil.rmtree(resolved_home)
+                    removed_dirs += 1
+
+            self.profiles.clear()
+            self.active_profile_by_scope.clear()
+            self.last_profile_switch_by_scope.clear()
+            local_home = ensure_dir(self.profile_root / "local")
+            self.register_profile(
+                email="local",
+                display_name="Local Conexgram profile",
+                home_dir=local_home,
+                profile_id="local",
+            )
+            for session in self.sessions.values():
+                session.profile_id = "local"
+                session.codex_thread_id = None
+            self.save()
+            return removed_profiles, removed_dirs
 
     def create(
         self,

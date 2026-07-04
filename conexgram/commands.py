@@ -93,6 +93,7 @@ class CommandHandler:
                 ("/profile list", "List available Codex auth profiles.", "/profile list"),
                 ("/profile add", "Auto-scan default profiles.", "/profile add"),
                 ("/profile switch", "Switch active profile.", "/help cmd profile-switch"),
+                ("/profile reset", "Reset Conexgram Codex profiles.", "/profile reset"),
                 ("/codexlogin", "Start Codex device-auth flow.", "/codexlogin"),
             ],
         },
@@ -138,6 +139,7 @@ class CommandHandler:
         "mode": "/mode safe|workspace|full|<preset>\nSet execution mode for this session.",
         "confirm": "/confirm computer|sandbox\nConfirm enabling broad local access.",
         "profile-switch": "/profile switch <id|email|name>\nSwitch active Codex auth profile.",
+        "profile-reset": "/profile reset\nReset Conexgram Codex profiles without touching native Codex auth.",
         "revoke": "/revoke <telegram_id_or_chat_id>\nRemove access. Owner only.",
         "logs": "/logs [gateway|launchd]\nSend a local log file.",
         "codex": "/codex <args>\nRun a native Codex CLI command through the active Conexgram profile.",
@@ -507,7 +509,50 @@ class CommandHandler:
             if len(args) < 2:
                 return "Usage: /profile switch <id|email|name>"
             return self.profile_switch(chat_id, user_id, " ".join(args[1:]))
-        return "Usage: /profile [list|current|switch|add]"
+        if action == "reset":
+            return self.profile_reset(chat_id, user_id, args[1:])
+        return "Usage: /profile [list|current|switch|add|reset]"
+
+    def profile_reset(
+        self,
+        chat_id: int,
+        user_id: int,
+        args: list[str],
+    ) -> Union[MessageCommandResponse, ProfileCommandResponse]:
+        if args and args[0].lower() in {"yes", "confirm"}:
+            stop_session_ids = [session.id for session in self.store.list_all_sessions()]
+            removed_profiles, removed_dirs = self.store.reset_conexgram_profiles()
+            return ProfileCommandResponse(
+                text=(
+                    "Conexgram Codex profiles were reset.\n"
+                    f"Profiles removed from Conexgram state: {removed_profiles}\n"
+                    f"Conexgram profile folders deleted: {removed_dirs}\n"
+                    "Native Codex auth was not touched."
+                ),
+                stop_session_ids=stop_session_ids,
+                reply_markup={"inline_keyboard": [[{"text": "Main menu", "callback_data": "/menu"}]]},
+            )
+        if args and args[0].lower() in {"no", "cancel"}:
+            return MessageCommandResponse(
+                text="Profile reset cancelled.",
+                reply_markup={"inline_keyboard": [[{"text": "Main menu", "callback_data": "/menu"}]]},
+            )
+        return MessageCommandResponse(
+            text=(
+                "Reset Conexgram Codex profiles?\n"
+                "This removes Conexgram profile registry and profile folders under the Conexgram profile directory only.\n"
+                "Native Codex auth is not touched."
+            ),
+            reply_markup={
+                "inline_keyboard": [
+                    [
+                        {"text": "Yes, reset", "callback_data": "/profile reset yes"},
+                        {"text": "No", "callback_data": "/profile reset no"},
+                    ],
+                    [{"text": "Main menu", "callback_data": "/menu"}],
+                ]
+            },
+        )
 
     def _profile_add_default(self) -> str:
         profile_root = self.store.profile_root
@@ -1911,6 +1956,7 @@ class CommandHandler:
             "/profile current - show active Codex profile\n"
             "/profile switch <id|email|name> - switch active profile\n"
             "/profile add [path] - auto-scan default profiles or register a custom profile path\n"
+            "/profile reset - reset Conexgram Codex profiles without touching native Codex auth\n"
             "/new [working_dir] - start a fresh Codex session\n"
             "/status - show the active session\n"
             "/sessions - browse Codex workspaces and threads\n"

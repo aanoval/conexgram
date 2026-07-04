@@ -647,6 +647,43 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIn("auto@example.com", response)
             self.assertIsNotNone(handler.store.find_profile("auto"))
 
+    def test_profile_reset_requires_confirmation_and_keeps_external_auth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            handler = make_handler(tmp)
+            profile_root = root / ".codex-profiles"
+            conexgram_home = profile_root / "conexgram-profile"
+            external_home = root / "native-codex-home"
+            make_fake_auth(conexgram_home, "conexgram@example.com", "Conexgram")
+            make_fake_auth(external_home, "native@example.com", "Native")
+            handler.store.profile_root = profile_root
+            conexgram_profile = handler.store.register_profile_from_home(conexgram_home)
+            external_profile = handler.store.register_profile_from_home(external_home)
+            session = handler.store.create(
+                scope_key=handler.scope_key(1, 2),
+                chat_id=1,
+                user_id=2,
+                working_dir=root,
+                model=None,
+                profile_id=conexgram_profile.id,
+            )
+
+            prompt = handler.handle_command("/profile reset", 1, 2)
+
+            self.assertIsInstance(prompt, MessageCommandResponse)
+            self.assertTrue(conexgram_home.exists())
+            self.assertTrue(external_home.exists())
+
+            response = handler.handle_command("/profile reset yes", 1, 2)
+
+            self.assertIsInstance(response, ProfileCommandResponse)
+            assert isinstance(response, ProfileCommandResponse)
+            self.assertFalse(conexgram_home.exists())
+            self.assertTrue(external_home.exists())
+            self.assertIsNone(handler.store.find_profile(external_profile.id))
+            self.assertIsNotNone(handler.store.find_profile("local"))
+            self.assertEqual(response.stop_session_ids, [session.id])
+
     def test_profile_switch_clears_other_profile_threads(self):
         with tempfile.TemporaryDirectory() as tmp:
             handler = make_handler(tmp)

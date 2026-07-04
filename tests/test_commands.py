@@ -290,12 +290,17 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertNotIn("/settings", response.text)
             self.assertEqual(
                 response.reply_markup["inline_keyboard"][0][0]["callback_data"],
-                "/settings",
+                "/models",
             )
             self.assertEqual(
                 response.reply_markup["inline_keyboard"][0][0]["text"],
-                "Settings",
+                "Models",
             )
+            self.assertEqual(
+                response.reply_markup["inline_keyboard"][0][1]["callback_data"],
+                "/reasoning",
+            )
+            self.assertEqual(len(response.reply_markup["inline_keyboard"]), 2)
 
     def test_menu_alias_returns_interactive_help(self):
         with tempfile.TemporaryDirectory() as tmp:

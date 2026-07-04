@@ -71,14 +71,8 @@ class CommandHandler:
         "model": {
             "title": "Model & Mode",
             "commands": [
-                ("/settings", "Open friendly settings panel.", "/settings"),
-                ("/model", "Choose model for this session.", "/model"),
                 ("/models", "Choose model for this session.", "/models"),
                 ("/reasoning", "Choose reasoning for this session.", "/reasoning"),
-                ("/defaults", "Set defaults for new sessions.", "/defaults"),
-                ("/mode", "Set execution mode.", "/help cmd mode"),
-                ("/preset", "Apply a common setup.", "/preset list"),
-                ("/fast", "Toggle fast mode.", "/fast"),
             ],
         },
         "access": {

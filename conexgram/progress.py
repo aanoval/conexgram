@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import random
 import threading
 import time
 from typing import Optional
@@ -59,10 +58,14 @@ class ProgressNotifier:
 
             now = time.monotonic()
             if messages_enabled and now - last_message_at >= self.config.progress_interval_seconds:
+                status = handle.latest_status
+                if not status:
+                    handle.stop_event.wait(self.config.typing_interval_seconds if typing_enabled else 1)
+                    continue
                 self._upsert_progress_message(
                     handle,
                     chat_id,
-                    random.choice(self.config.messages),
+                    status,
                     reply_to_message_id,
                 )
                 last_message_at = now
@@ -96,6 +99,57 @@ class ProgressNotifier:
     def _effective_bool(value: Optional[bool], default: bool) -> bool:
         return default if value is None else bool(value)
 
+    @staticmethod
+    def event_status(event: dict) -> str:
+        event_type = str(event.get("type") or "")
+        if event_type == "turn.failed":
+            error = event.get("error")
+            if isinstance(error, dict):
+                return ProgressNotifier._compact(str(error.get("message") or "turn failed"))
+            return "turn failed"
+        if event_type == "error":
+            return ProgressNotifier._compact(str(event.get("message") or "error"))
+
+        item = event.get("item")
+        if not isinstance(item, dict):
+            return ""
+        item_type = str(item.get("type") or "item")
+        if item_type == "agent_message":
+            return ""
+        label = ProgressNotifier._item_label(item_type, item)
+        if not label:
+            return ""
+        if event_type.endswith(".completed") or event_type == "item.completed":
+            return ProgressNotifier._compact(f"completed {label}")
+        if event_type.endswith(".started") or event_type == "item.started":
+            return ProgressNotifier._compact(label)
+        return ""
+
+    @staticmethod
+    def _item_label(item_type: str, item: dict) -> str:
+        if item_type == "file_change":
+            changes = item.get("changes")
+            if isinstance(changes, list) and changes:
+                first = changes[0]
+                if isinstance(first, dict):
+                    kind = str(first.get("kind") or "edit")
+                    path = str(first.get("path") or "").strip()
+                    if path:
+                        return f"file_change: {kind} {path}"
+            return "file_change"
+        for key in ("command", "cmd", "title", "name", "text"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return f"{item_type}: {value}"
+        return item_type
+
+    @staticmethod
+    def _compact(text: str, limit: int = 220) -> str:
+        cleaned = " ".join(text.strip().split())
+        if len(cleaned) > limit:
+            return cleaned[: limit - 3].rstrip() + "..."
+        return cleaned
+
 
 class ProgressHandle:
     """Stop handle returned by ProgressNotifier.start."""
@@ -104,6 +158,20 @@ class ProgressHandle:
         self.stop_event = stop_event
         self.thread: Optional[threading.Thread] = None
         self.message_id: Optional[int] = None
+        self._status_lock = threading.Lock()
+        self._latest_status = ""
+
+    @property
+    def latest_status(self) -> str:
+        with self._status_lock:
+            return self._latest_status
+
+    def update_from_event(self, event: dict) -> None:
+        status = ProgressNotifier.event_status(event)
+        if not status:
+            return
+        with self._status_lock:
+            self._latest_status = status
 
     def stop(self) -> None:
         self.stop_event.set()

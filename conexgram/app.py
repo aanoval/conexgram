@@ -237,7 +237,12 @@ class GatewayApp:
         progress_handle = self.progress.start(session, message.chat_id, message.message_id)
         try:
             profile_home = self.commands.active_profile_home(message.chat_id, message.user_id)
-            result = self.codex.run_turn(session, message.text, profile_home=profile_home)
+            result = self.codex.run_turn(
+                session,
+                message.text,
+                profile_home=profile_home,
+                event_callback=progress_handle.update_from_event,
+            )
         finally:
             progress_handle.stop()
 

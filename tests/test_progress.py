@@ -32,6 +32,16 @@ class ProgressNotifierTests(unittest.TestCase):
         self.assertEqual(telegram.edited, [(10, 101, "still working more")])
         self.assertEqual(handle.message_id, 101)
 
+    def test_progress_status_comes_from_codex_event(self):
+        handle = ProgressHandle(threading.Event())
+
+        handle.update_from_event({
+            "type": "item.started",
+            "item": {"type": "shell_command", "command": "npm test\nwith newline"},
+        })
+
+        self.assertEqual(handle.latest_status, "shell_command: npm test with newline")
+
 
 if __name__ == "__main__":
     unittest.main()

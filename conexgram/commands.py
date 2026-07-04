@@ -649,6 +649,7 @@ class CommandHandler:
                     "inline_keyboard": [
                         [{"text": "New session", "callback_data": "/help cmd new"}],
                         [{"text": "Back to workspaces", "callback_data": "/sessions"}],
+                        [{"text": "Main menu", "callback_data": "/menu"}],
                     ]
                 },
             )
@@ -661,6 +662,7 @@ class CommandHandler:
             label = f"{marker}{index}. {self._truncate(name, 28)} · {thread} · {session.turn_count} turns"
             keyboard.append([{"text": label.strip(), "callback_data": f"/switch {session.id}"}])
         keyboard.append([{"text": "Back to workspaces", "callback_data": "/sessions"}])
+        keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
         return MessageCommandResponse(
             text="Choose a gateway session:",
             reply_markup={"inline_keyboard": keyboard},
@@ -678,7 +680,7 @@ class CommandHandler:
                 reply_markup={
                     "inline_keyboard": [
                         [{"text": "Gateway sessions", "callback_data": "/sessions local"}],
-                        [{"text": "Back to help", "callback_data": "/help"}],
+                        [{"text": "Main menu", "callback_data": "/menu"}],
                     ]
                 },
             )
@@ -695,8 +697,9 @@ class CommandHandler:
                     "callback_data": f"/sessions {number}",
                 }
             ])
-        keyboard = keyboard[:19]
+        keyboard = keyboard[:18]
         keyboard.append([{"text": "Gateway sessions", "callback_data": "/sessions local"}])
+        keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
         return MessageCommandResponse(
             text=f"Choose a Codex workspace ({len(workspaces)} found):",
             reply_markup={"inline_keyboard": keyboard},
@@ -733,6 +736,7 @@ class CommandHandler:
             {"text": "Back to workspaces", "callback_data": "/sessions"},
             {"text": "Gateway sessions", "callback_data": "/sessions local"},
         ])
+        keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
         return MessageCommandResponse(
             text=f"Choose a Codex session in {self._workspace_label(workspace.cwd)}:",
             reply_markup={"inline_keyboard": keyboard},
@@ -936,6 +940,7 @@ class CommandHandler:
                             {"text": "Full access", "callback_data": "/sandbox danger-full-access"},
                             {"text": "Default", "callback_data": "/sandbox default"},
                         ],
+                        [{"text": "Main menu", "callback_data": "/menu"}],
                     ]
                 },
             )
@@ -991,6 +996,7 @@ class CommandHandler:
                             {"text": "Never", "callback_data": "/approval never"},
                             {"text": "Default", "callback_data": "/approval default"},
                         ],
+                        [{"text": "Main menu", "callback_data": "/menu"}],
                     ]
                 },
             )
@@ -1291,6 +1297,9 @@ class CommandHandler:
                 [
                     {"text": "Progress On", "callback_data": "/progress on"},
                     {"text": "Progress Off", "callback_data": "/progress off"},
+                ],
+                [
+                    {"text": "Main menu", "callback_data": "/menu"},
                 ],
             ]
         }
@@ -1683,7 +1692,7 @@ class CommandHandler:
                 row = []
         if row:
             keyboard.append(row)
-        keyboard.append([{"text": "Back to help", "callback_data": "/help"}])
+        keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
         return MessageCommandResponse(
             text=f"{section['title']} commands\nChoose an option:",
             reply_markup={"inline_keyboard": keyboard},
@@ -1695,7 +1704,7 @@ class CommandHandler:
             return self.help([])
         return MessageCommandResponse(
             text=detail,
-            reply_markup={"inline_keyboard": [[{"text": "Back to help", "callback_data": "/help"}]]},
+            reply_markup={"inline_keyboard": [[{"text": "Main menu", "callback_data": "/menu"}]]},
         )
 
     @staticmethod

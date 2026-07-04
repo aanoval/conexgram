@@ -273,6 +273,17 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIn("/reset", response.text)
             self.assertEqual(len(handler.store.list_for_scope(handler.scope_key(1, 2))), 0)
 
+    def test_interactive_menus_end_with_main_menu_button(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+
+            for command in ("/settings", "/sandbox", "/approval", "/help model", "/help cmd reset", "/sessions"):
+                response = handler.handle_command(command, 1, 2)
+                self.assertIsInstance(response, MessageCommandResponse, command)
+                assert isinstance(response, MessageCommandResponse)
+                last_row = response.reply_markup["inline_keyboard"][-1]
+                self.assertEqual(last_row, [{"text": "Main menu", "callback_data": "/menu"}], command)
+
     def test_sessions_browses_codex_workspaces_and_switches_thread(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

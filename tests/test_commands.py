@@ -277,6 +277,8 @@ class CommandHandlerTests(unittest.TestCase):
                 response.reply_markup["inline_keyboard"][0][0]["callback_data"],
                 "/help session",
             )
+            buttons = [button["text"] for row in response.reply_markup["inline_keyboard"] for button in row]
+            self.assertNotIn("Sessions", buttons)
 
     def test_help_category_returns_command_buttons(self):
         with tempfile.TemporaryDirectory() as tmp:

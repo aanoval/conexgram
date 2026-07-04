@@ -1850,7 +1850,6 @@ class CommandHandler:
             ],
             [
                 {"text": "Settings", "callback_data": "/settings"},
-                {"text": "Sessions", "callback_data": "/sessions"},
             ],
             [
                 {"text": "Status", "callback_data": "/status"},

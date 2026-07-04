@@ -303,7 +303,7 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIsInstance(workspaces, MessageCommandResponse)
             assert isinstance(workspaces, MessageCommandResponse)
             self.assertIn("Choose a Codex workspace", workspaces.text)
-            self.assertIn("project-a", workspaces.text)
+            self.assertIn("project-a", workspaces.reply_markup["inline_keyboard"][0][0]["text"])
             self.assertEqual(
                 workspaces.reply_markup["inline_keyboard"][0][0]["callback_data"],
                 "/sessions 1",
@@ -313,7 +313,7 @@ class CommandHandlerTests(unittest.TestCase):
 
             self.assertIsInstance(threads, MessageCommandResponse)
             assert isinstance(threads, MessageCommandResponse)
-            self.assertIn("Build project A", threads.text)
+            self.assertIn("Build project A", threads.reply_markup["inline_keyboard"][0][0]["text"])
             self.assertEqual(
                 threads.reply_markup["inline_keyboard"][0][0]["callback_data"],
                 "/switch codex 019thread-a",

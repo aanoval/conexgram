@@ -653,18 +653,17 @@ class CommandHandler:
                 },
             )
         active = self.store.get_active(scope_key)
-        lines = ["Gateway sessions:"]
+        keyboard: list[list[dict[str, str]]] = []
         for index, session in enumerate(sessions[:20], start=1):
             marker = "*" if active and active.id == session.id else " "
             thread = "started" if session.codex_thread_id else "fresh"
-            lines.append(
-                f"{marker} {index}. {session.id[:8]} {thread} "
-                f"turns={session.turn_count} cwd={session.working_dir}"
-            )
-        lines.append("Use /switch <number-or-id> for gateway sessions.")
+            name = session.title or Path(session.working_dir).name or session.id[:8]
+            label = f"{marker}{index}. {self._truncate(name, 28)} · {thread} · {session.turn_count} turns"
+            keyboard.append([{"text": label.strip(), "callback_data": f"/switch {session.id}"}])
+        keyboard.append([{"text": "Back to workspaces", "callback_data": "/sessions"}])
         return MessageCommandResponse(
-            text="\n".join(lines),
-            reply_markup={"inline_keyboard": [[{"text": "Back to workspaces", "callback_data": "/sessions"}]]},
+            text="Choose a gateway session:",
+            reply_markup={"inline_keyboard": keyboard},
         )
 
     def _codex_workspaces(self, chat_id: int, user_id: int) -> Union[str, MessageCommandResponse]:
@@ -683,26 +682,24 @@ class CommandHandler:
                     ]
                 },
             )
-        lines = ["Choose a Codex workspace:"]
         keyboard: list[list[dict[str, str]]] = []
         for number, workspace in enumerate(workspaces, start=1):
             name = self._workspace_label(workspace.cwd)
-            lines.append(
-                f"{number}. {name}\n"
-                f"   {workspace.thread_count} threads, {self._format_tokens(workspace.total_tokens)} tokens\n"
-                f"   {workspace.cwd}"
+            label = (
+                f"{number}. {self._truncate(name, 26)} · "
+                f"{workspace.thread_count} threads · {self._format_tokens(workspace.total_tokens)}"
             )
             keyboard.append([
                 {
-                    "text": f"{number}. {self._truncate(name, 36)}",
+                    "text": label,
                     "callback_data": f"/sessions {number}",
                 }
             ])
-        lines.append("")
-        lines.append("Tap a workspace, or send /sessions <number>. Use /sessions local for gateway sessions.")
+        keyboard = keyboard[:19]
+        keyboard.append([{"text": "Gateway sessions", "callback_data": "/sessions local"}])
         return MessageCommandResponse(
-            text="\n".join(lines),
-            reply_markup={"inline_keyboard": keyboard[:20]},
+            text=f"Choose a Codex workspace ({len(workspaces)} found):",
+            reply_markup={"inline_keyboard": keyboard},
         )
 
     def _codex_workspace_threads(
@@ -719,21 +716,16 @@ class CommandHandler:
         threads = index.list_threads(workspace.cwd, limit=20)
         if not threads:
             return "No Codex threads found for this workspace."
-        lines = [
-            f"Choose a Codex session in {self._workspace_label(workspace.cwd)}:",
-            workspace.cwd,
-        ]
         keyboard: list[list[dict[str, str]]] = []
         for number, thread in enumerate(threads, start=1):
             title = self._thread_title(thread)
-            lines.append(
-                f"{number}. {title}\n"
-                f"   {thread.id[:8]} | {self._format_tokens(thread.tokens_used)} tokens"
-                f" | {self._format_timestamp(thread.updated_at)}"
+            label = (
+                f"{number}. {self._truncate(title, 30)} · "
+                f"{self._format_tokens(thread.tokens_used)} · {self._format_timestamp(thread.updated_at)}"
             )
             keyboard.append([
                 {
-                    "text": f"{number}. {self._truncate(title, 42)}",
+                    "text": label,
                     "callback_data": f"/switch codex {thread.id}",
                 }
             ])
@@ -742,7 +734,7 @@ class CommandHandler:
             {"text": "Gateway sessions", "callback_data": "/sessions local"},
         ])
         return MessageCommandResponse(
-            text="\n".join(lines),
+            text=f"Choose a Codex session in {self._workspace_label(workspace.cwd)}:",
             reply_markup={"inline_keyboard": keyboard},
         )
 

@@ -40,7 +40,21 @@ class ProgressNotifierTests(unittest.TestCase):
             "item": {"type": "shell_command", "command": "npm test\nwith newline"},
         })
 
-        self.assertEqual(handle.latest_status, "shell_command: npm test with newline")
+        self.assertEqual(handle.latest_status, "Codex is running verification.")
+
+    def test_progress_status_hides_raw_command_text(self):
+        handle = ProgressHandle(threading.Event())
+
+        handle.update_from_event({
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": "/bin/bash -lc \"sed -n '600,635p' /srv/app/file.tsx\"",
+            },
+        })
+
+        self.assertEqual(handle.latest_status, "Codex finished inspecting the workspace.")
+        self.assertNotIn("sed -n", handle.latest_status)
 
 
 if __name__ == "__main__":

@@ -116,32 +116,108 @@ class ProgressNotifier:
         item_type = str(item.get("type") or "item")
         if item_type == "agent_message":
             return ""
-        label = ProgressNotifier._item_label(item_type, item)
-        if not label:
+        completed = event_type.endswith(".completed") or event_type == "item.completed"
+        started = event_type.endswith(".started") or event_type == "item.started"
+        if not completed and not started:
             return ""
-        if event_type.endswith(".completed") or event_type == "item.completed":
-            return ProgressNotifier._compact(f"completed {label}")
-        if event_type.endswith(".started") or event_type == "item.started":
-            return ProgressNotifier._compact(label)
-        return ""
+        status = ProgressNotifier._natural_item_status(item_type, item, completed=completed)
+        return ProgressNotifier._compact(status)
 
     @staticmethod
-    def _item_label(item_type: str, item: dict) -> str:
+    def _natural_item_status(item_type: str, item: dict, completed: bool) -> str:
+        if item_type in {"command_execution", "shell_command", "local_shell_command"}:
+            command = ProgressNotifier._item_text(item, ("command", "cmd", "text"))
+            category = ProgressNotifier._command_category(command)
+            if category == "inspect":
+                return "Codex finished inspecting the workspace." if completed else "Codex is inspecting the workspace."
+            if category == "verify":
+                return "Codex finished verification." if completed else "Codex is running verification."
+            if category == "edit":
+                return "Codex finished updating files." if completed else "Codex is updating files."
+            if category == "git":
+                return "Codex finished checking repository changes." if completed else "Codex is checking repository changes."
+            if category == "install":
+                return "Codex finished dependency work." if completed else "Codex is working with dependencies."
+            return "Codex completed a project step." if completed else "Codex is working with the project."
+
         if item_type == "file_change":
-            changes = item.get("changes")
-            if isinstance(changes, list) and changes:
-                first = changes[0]
-                if isinstance(first, dict):
-                    kind = str(first.get("kind") or "edit")
-                    path = str(first.get("path") or "").strip()
-                    if path:
-                        return f"file_change: {kind} {path}"
-            return "file_change"
-        for key in ("command", "cmd", "title", "name", "text"):
+            action = ProgressNotifier._file_change_action(item)
+            return f"Codex finished {action}." if completed else f"Codex is {action}."
+
+        text = ProgressNotifier._item_text(item, ("title", "name"))
+        if text:
+            return f"Codex completed {text}." if completed else f"Codex is working on {text}."
+        return "Codex completed a step." if completed else "Codex is working through the task."
+
+    @staticmethod
+    def _command_category(command: str) -> str:
+        lowered = command.lower()
+        inspect_needles = (
+            "sed ",
+            "cat ",
+            "rg ",
+            "grep ",
+            "find ",
+            "ls ",
+            " pwd",
+            "tail ",
+            "head ",
+            "nl ",
+            "git show",
+            "git diff",
+        )
+        verify_needles = (
+            " test",
+            "pytest",
+            "unittest",
+            "npm test",
+            "pnpm test",
+            "yarn test",
+            " xcodebuild",
+            " fastlane",
+            " build",
+            " lint",
+            " typecheck",
+        )
+        edit_needles = ("apply_patch", " python ", "node ", "perl ", "ruby ")
+        install_needles = ("npm install", "pnpm install", "yarn install", "pip install", "bundle install")
+        git_needles = ("git status", "git add", "git commit", "git push", "git pull")
+        padded = f" {lowered} "
+        if any(needle in lowered for needle in inspect_needles):
+            return "inspect"
+        if any(needle in padded for needle in verify_needles):
+            return "verify"
+        if any(needle in padded for needle in install_needles):
+            return "install"
+        if any(needle in padded for needle in git_needles):
+            return "git"
+        if any(needle in padded for needle in edit_needles):
+            return "edit"
+        return "work"
+
+    @staticmethod
+    def _file_change_action(item: dict) -> str:
+        changes = item.get("changes")
+        if not isinstance(changes, list) or not changes:
+            return "updating files"
+        kinds = {
+            str(change.get("kind") or "edit").lower()
+            for change in changes
+            if isinstance(change, dict)
+        }
+        if kinds == {"add"}:
+            return "adding files"
+        if kinds == {"delete"}:
+            return "removing files"
+        return "updating files"
+
+    @staticmethod
+    def _item_text(item: dict, keys: tuple[str, ...]) -> str:
+        for key in keys:
             value = item.get(key)
             if isinstance(value, str) and value.strip():
-                return f"{item_type}: {value}"
-        return item_type
+                return " ".join(value.strip().split())
+        return ""
 
     @staticmethod
     def _compact(text: str, limit: int = 220) -> str:

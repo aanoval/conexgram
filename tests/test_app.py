@@ -37,8 +37,9 @@ class FakeTelegram:
         text: str,
         reply_to_message_id: Optional[int] = None,
         reply_markup: Optional[dict] = None,
-    ) -> None:
+    ) -> int:
         self.sent.append((chat_id, text, reply_to_message_id, reply_markup))
+        return len(self.sent)
 
     def edit_message_text(
         self,

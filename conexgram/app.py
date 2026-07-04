@@ -61,7 +61,7 @@ class GatewayApp:
         )
         self.commands = CommandHandler(config, self.store)
         self.commands.set_notify_callback(self._notify_for_commands)
-        self.progress = ProgressNotifier(self.telegram, config.progress, self._send)
+        self.progress = ProgressNotifier(self.telegram, config.progress)
         self.stt_transcriber = LocalSttTranscriber(config.stt)
         self.queue: queue.Queue[WorkItem] = queue.Queue()
         self.stop_event = threading.Event()
@@ -256,7 +256,14 @@ class GatewayApp:
             prefix = f"Codex exited with code {result.return_code}.\n\n"
         text_to_send = (prefix + response_text).strip()
         if text_to_send:
-            self._send(message.chat_id, text_to_send)
+            if (
+                progress_handle.message_id is not None
+                and len(text_to_send) <= self.config.gateway.max_telegram_message_chars
+                and self._edit_callback_message(message.chat_id, progress_handle.message_id, text_to_send)
+            ):
+                pass
+            else:
+                self._send(message.chat_id, text_to_send)
 
         for directive in attachment_directives:
             attachment = self._prepare_attachment(directive, session)

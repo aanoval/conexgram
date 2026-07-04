@@ -70,7 +70,7 @@ class TelegramClient:
         text: str,
         reply_to_message_id: Optional[int] = None,
         reply_markup: Optional[dict[str, Any]] = None,
-    ) -> None:
+    ) -> Optional[int]:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
@@ -80,7 +80,12 @@ class TelegramClient:
             payload["reply_parameters"] = {"message_id": reply_to_message_id}
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        self._request("sendMessage", payload, timeout=30)
+        result = self._request("sendMessage", payload, timeout=30)
+        if isinstance(result, dict):
+            message_id = result.get("message_id")
+            if isinstance(message_id, int):
+                return message_id
+        return None
 
     def edit_message_text(
         self,

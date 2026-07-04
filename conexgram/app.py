@@ -69,8 +69,34 @@ class GatewayApp:
     def _notify_for_commands(self, chat_id: int, text: str) -> None:
         self._send(chat_id, text)
 
+    def _sync_bot_menu(self) -> None:
+        commands = [
+            {"command": "menu", "description": "Open the Conexgram command menu"},
+            {"command": "help", "description": "Open help and command categories"},
+            {"command": "status", "description": "Show the active Codex session"},
+            {"command": "sessions", "description": "Browse workspaces and sessions"},
+            {"command": "settings", "description": "Open model and safety settings"},
+            {"command": "quota", "description": "Show Codex usage and limits"},
+            {"command": "profile", "description": "Manage Codex auth profiles"},
+            {"command": "workspace", "description": "Show or set workspace"},
+            {"command": "sandbox", "description": "Choose Codex sandbox"},
+            {"command": "approval", "description": "Choose approval policy"},
+            {"command": "users", "description": "List authorized users"},
+            {"command": "invite", "description": "Create a one-time user invite"},
+            {"command": "codexlogin", "description": "Add a Codex auth profile"},
+            {"command": "sendfile", "description": "Send a local file to Telegram"},
+            {"command": "stop", "description": "Stop the running Codex process"},
+        ]
+        try:
+            self.telegram.set_my_commands(commands)
+            self.telegram.set_chat_menu_button()
+            LOG.info("Synced Telegram bot command menu")
+        except TelegramApiError as exc:
+            LOG.warning("Failed to sync Telegram bot command menu: %s", exc)
+
     def run(self) -> None:
         LOG.info("Starting Conexgram")
+        self._sync_bot_menu()
         cleanup_worker = threading.Thread(target=self._cleanup_loop, name="upload-cleanup", daemon=True)
         cleanup_worker.start()
         for index in range(self.config.gateway.worker_count):

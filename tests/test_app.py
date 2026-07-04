@@ -28,6 +28,8 @@ class FakeTelegram:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str, Optional[int], Optional[dict]]] = []
         self.edited: list[tuple[int, int, str, Optional[dict]]] = []
+        self.commands: list[dict[str, str]] = []
+        self.menu_synced = False
 
     def send_message(
         self,
@@ -46,6 +48,12 @@ class FakeTelegram:
         reply_markup: Optional[dict] = None,
     ) -> None:
         self.edited.append((chat_id, message_id, text, reply_markup))
+
+    def set_my_commands(self, commands: list[dict[str, str]]) -> None:
+        self.commands = commands
+
+    def set_chat_menu_button(self) -> None:
+        self.menu_synced = True
 
 
 class GatewayAppTests(unittest.TestCase):
@@ -192,6 +200,38 @@ class GatewayAppTests(unittest.TestCase):
             self.assertEqual(message_id, 77)
             self.assertIn("Model & Mode commands:", text)
             self.assertIsNotNone(reply_markup)
+
+    def test_callback_sessions_edits_original_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            fake = FakeTelegram()
+            app.telegram = fake  # type: ignore[assignment]
+
+            app._handle_message(TelegramMessage(
+                update_id=1,
+                message_id=78,
+                chat_id=1,
+                user_id=2,
+                text="/sessions",
+                callback_query_id="callback-2",
+            ))
+
+            self.assertEqual(fake.sent, [])
+            self.assertEqual(len(fake.edited), 1)
+            self.assertTrue(fake.edited[0][2])
+            self.assertIsNotNone(fake.edited[0][3])
+
+    def test_sync_bot_menu_registers_telegram_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            fake = FakeTelegram()
+            app.telegram = fake  # type: ignore[assignment]
+
+            app._sync_bot_menu()
+
+            self.assertTrue(fake.menu_synced)
+            self.assertIn({"command": "menu", "description": "Open the Conexgram command menu"}, fake.commands)
+            self.assertIn({"command": "sessions", "description": "Browse workspaces and sessions"}, fake.commands)
 
     def test_cleanup_uploads_deletes_expired_files_only(self):
         with tempfile.TemporaryDirectory() as tmp:

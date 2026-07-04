@@ -99,6 +99,12 @@ class TelegramClient:
             payload["reply_markup"] = reply_markup
         self._request("editMessageText", payload, timeout=30)
 
+    def set_my_commands(self, commands: list[dict[str, str]]) -> None:
+        self._request("setMyCommands", {"commands": commands}, timeout=30)
+
+    def set_chat_menu_button(self) -> None:
+        self._request("setChatMenuButton", {"menu_button": {"type": "commands"}}, timeout=30)
+
     def answer_callback_query(self, callback_query_id: str) -> None:
         self._request("answerCallbackQuery", {"callback_query_id": callback_query_id}, timeout=15)
 

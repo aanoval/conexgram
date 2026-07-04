@@ -246,6 +246,21 @@ class CommandHandlerTests(unittest.TestCase):
                 response.reply_markup["inline_keyboard"][0][0]["callback_data"],
                 "/settings",
             )
+            self.assertEqual(
+                response.reply_markup["inline_keyboard"][0][0]["text"],
+                "Settings",
+            )
+
+    def test_menu_alias_returns_interactive_help(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+
+            response = handler.handle_command("/menu", 1, 2)
+
+            self.assertIsInstance(response, MessageCommandResponse)
+            assert isinstance(response, MessageCommandResponse)
+            self.assertIn("Conexgram command menu", response.text)
+            self.assertIsNotNone(response.reply_markup)
 
     def test_help_command_detail_does_not_run_action(self):
         with tempfile.TemporaryDirectory() as tmp:

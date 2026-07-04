@@ -364,7 +364,7 @@ class CommandHandler:
         command = parts[0].split("@", 1)[0].lower()
         args = parts[1:]
 
-        if command in {"/start", "/help"}:
+        if command in {"/start", "/help", "/menu"}:
             return self.help(args)
         if command == "/profile":
             return self.profile(chat_id, user_id, args)
@@ -639,11 +639,19 @@ class CommandHandler:
             return self._codex_workspace_threads(chat_id, user_id, int(args[0]))
         return self._codex_workspaces(chat_id, user_id)
 
-    def _gateway_sessions(self, chat_id: int, user_id: int) -> str:
+    def _gateway_sessions(self, chat_id: int, user_id: int) -> MessageCommandResponse:
         scope_key = self.scope_key(chat_id, user_id)
         sessions = self.store.list_for_scope(scope_key)
         if not sessions:
-            return "No sessions yet. Send /new to create one."
+            return MessageCommandResponse(
+                text="No gateway sessions yet.",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "New session", "callback_data": "/help cmd new"}],
+                        [{"text": "Back to workspaces", "callback_data": "/sessions"}],
+                    ]
+                },
+            )
         active = self.store.get_active(scope_key)
         lines = ["Gateway sessions:"]
         for index, session in enumerate(sessions[:20], start=1):
@@ -654,15 +662,26 @@ class CommandHandler:
                 f"turns={session.turn_count} cwd={session.working_dir}"
             )
         lines.append("Use /switch <number-or-id> for gateway sessions.")
-        return "\n".join(lines)
+        return MessageCommandResponse(
+            text="\n".join(lines),
+            reply_markup={"inline_keyboard": [[{"text": "Back to workspaces", "callback_data": "/sessions"}]]},
+        )
 
     def _codex_workspaces(self, chat_id: int, user_id: int) -> Union[str, MessageCommandResponse]:
         index = self._codex_index(chat_id, user_id)
         workspaces = index.list_workspaces(limit=20)
         if not workspaces:
-            return (
-                "No Codex workspace metadata found for the active profile.\n"
-                "Use /sessions local to list Conexgram gateway sessions."
+            return MessageCommandResponse(
+                text=(
+                    "No Codex workspace metadata found for the active profile.\n"
+                    "You can still open gateway sessions below."
+                ),
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "Gateway sessions", "callback_data": "/sessions local"}],
+                        [{"text": "Back to help", "callback_data": "/help"}],
+                    ]
+                },
             )
         lines = ["Choose a Codex workspace:"]
         keyboard: list[list[dict[str, str]]] = []
@@ -1690,7 +1709,7 @@ class CommandHandler:
         row = []
         for command, description, callback in section["commands"]:
             lines.append(f"{command} - {description}")
-            row.append({"text": command, "callback_data": callback})
+            row.append({"text": self._help_button_label(command), "callback_data": callback})
             if len(row) == 2:
                 keyboard.append(row)
                 row = []
@@ -1710,6 +1729,19 @@ class CommandHandler:
             text=detail,
             reply_markup={"inline_keyboard": [[{"text": "Back to help", "callback_data": "/help"}]]},
         )
+
+    @staticmethod
+    def _help_button_label(command: str) -> str:
+        labels = {
+            "/codexlogin": "Codex login",
+            "/codexstatus": "Codex status",
+            "/fullaccess": "Full access",
+            "/sendfile": "Send file",
+        }
+        if command in labels:
+            return labels[command]
+        text = command.lstrip("/")
+        return " ".join(part.capitalize() for part in text.split())
 
     @staticmethod
     def help_text() -> str:

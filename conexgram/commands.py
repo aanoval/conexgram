@@ -924,15 +924,8 @@ class CommandHandler:
         session = self.ensure_session(chat_id, user_id)
         if not args or args[0].lower() in {"status", "menu"}:
             current = session.sandbox_mode or "Codex default"
-            text = (
-                "Sandbox:\n"
-                f"- Current: {current}\n"
-                "- read-only: Codex can inspect files but not write.\n"
-                "- workspace-write: Codex can write inside configured workspaces.\n"
-                "- danger-full-access: broad local access, requires confirmation."
-            )
             return MessageCommandResponse(
-                text=text,
+                text=f"Sandbox: {current}\nChoose an access level:",
                 reply_markup={
                     "inline_keyboard": [
                         [
@@ -986,15 +979,8 @@ class CommandHandler:
         session = self.ensure_session(chat_id, user_id)
         if not args or args[0].lower() in {"status", "menu"}:
             current = session.approval_policy or "Codex default"
-            text = (
-                "Approval policy:\n"
-                f"- Current: {current}\n"
-                "- untrusted: ask before commands outside the trusted set.\n"
-                "- on-request: let Codex request approval when needed.\n"
-                "- never: never ask; failures are returned to Codex."
-            )
             return MessageCommandResponse(
-                text=text,
+                text=f"Approval policy: {current}\nChoose a policy:",
                 reply_markup={
                     "inline_keyboard": [
                         [
@@ -1274,22 +1260,14 @@ class CommandHandler:
             f"- Extra writable dirs: {', '.join(str(root) for root in self.config.codex.additional_writable_dirs) or 'none'}"
         )
 
-    def settings(self, chat_id: int, user_id: int) -> str:
+    def settings(self, chat_id: int, user_id: int) -> MessageCommandResponse:
         session = self.ensure_session(chat_id, user_id)
         typing = self._effective_bool(session.typing_indicator, self.config.progress.typing_indicator)
         progress = self._effective_bool(session.progress_messages, self.config.progress.progress_messages)
         text = (
-            "Settings:\n"
-            f"1. Model: {session.model or 'Codex default'}\n"
-            f"2. Reasoning: {session.reasoning_effort or 'Codex default'}\n"
-            f"3. Mode: {session.mode}\n"
-            f"4. Sandbox: {session.sandbox_mode or 'Codex default'}\n"
-            f"5. Approval: {session.approval_policy or 'Codex default'}\n"
-            f"6. Computer Access: {'on' if self._session_full_access(session) else 'off'}\n"
-            f"7. Typing: {'on' if typing else 'off'}\n"
-            f"8. Progress text: {'on' if progress else 'off'}\n"
-            f"9. Workspace: {session.working_dir}\n\n"
-            "Commands: /model, /reasoning, /mode, /sandbox, /approval, /preset, /computer, /typing, /progress, /workspace"
+            f"Settings: {session.model or 'Codex default'} · {session.reasoning_effort or 'default'} · {session.mode}\n"
+            f"Sandbox {session.sandbox_mode or 'default'} · Approval {session.approval_policy or 'default'} · "
+            f"Typing {'on' if typing else 'off'} · Progress {'on' if progress else 'off'}"
         )
         keyboard = {
             "inline_keyboard": [
@@ -1696,11 +1674,9 @@ class CommandHandler:
 
     def _help_section(self, key: str) -> MessageCommandResponse:
         section = self._HELP_SECTIONS[key]
-        lines = [f"{section['title']} commands:"]
         keyboard = []
         row = []
-        for command, description, callback in section["commands"]:
-            lines.append(f"{command} - {description}")
+        for command, _description, callback in section["commands"]:
             row.append({"text": self._help_button_label(command), "callback_data": callback})
             if len(row) == 2:
                 keyboard.append(row)
@@ -1709,7 +1685,7 @@ class CommandHandler:
             keyboard.append(row)
         keyboard.append([{"text": "Back to help", "callback_data": "/help"}])
         return MessageCommandResponse(
-            text="\n".join(lines),
+            text=f"{section['title']} commands\nChoose an option:",
             reply_markup={"inline_keyboard": keyboard},
         )
 

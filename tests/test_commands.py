@@ -214,8 +214,8 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIsInstance(response, MessageCommandResponse)
             assert isinstance(response, MessageCommandResponse)
             self.assertIn("Settings:", response.text)
-            self.assertIn("Sandbox:", response.text)
-            self.assertIn("Approval:", response.text)
+            self.assertIn("Sandbox", response.text)
+            self.assertIn("Approval", response.text)
             self.assertIsNotNone(response.reply_markup)
 
     def test_help_returns_interactive_menu(self):
@@ -240,8 +240,8 @@ class CommandHandlerTests(unittest.TestCase):
 
             self.assertIsInstance(response, MessageCommandResponse)
             assert isinstance(response, MessageCommandResponse)
-            self.assertIn("Model & Mode commands:", response.text)
-            self.assertIn("/settings", response.text)
+            self.assertIn("Model & Mode commands", response.text)
+            self.assertNotIn("/settings", response.text)
             self.assertEqual(
                 response.reply_markup["inline_keyboard"][0][0]["callback_data"],
                 "/settings",

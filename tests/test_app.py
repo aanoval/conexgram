@@ -198,7 +198,7 @@ class GatewayAppTests(unittest.TestCase):
             chat_id, message_id, text, reply_markup = fake.edited[0]
             self.assertEqual(chat_id, 1)
             self.assertEqual(message_id, 77)
-            self.assertIn("Model & Mode commands:", text)
+            self.assertIn("Model & Mode commands", text)
             self.assertIsNotNone(reply_markup)
 
     def test_callback_sessions_edits_original_message(self):

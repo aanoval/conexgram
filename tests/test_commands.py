@@ -217,6 +217,52 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIn("Sandbox", response.text)
             self.assertIn("Approval", response.text)
             self.assertIsNotNone(response.reply_markup)
+            buttons = [button["text"] for row in response.reply_markup["inline_keyboard"] for button in row]
+            self.assertIn("Models", buttons)
+            self.assertIn("Reasoning", buttons)
+            self.assertIn("Defaults", buttons)
+            self.assertNotIn("Power", buttons)
+
+    def test_models_menu_uses_native_catalog_for_session_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            handler._native_models = lambda chat_id, user_id: [  # type: ignore[method-assign]
+                {
+                    "slug": "gpt-native",
+                    "display_name": "GPT Native",
+                    "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}],
+                }
+            ]
+
+            menu = handler.handle_command("/models", 1, 2)
+            selected = handler.handle_command("/model gpt-native", 1, 2)
+            session = handler.ensure_session(1, 2)
+
+            self.assertIsInstance(menu, MessageCommandResponse)
+            assert isinstance(menu, MessageCommandResponse)
+            self.assertEqual(menu.reply_markup["inline_keyboard"][1][0]["callback_data"], "/model gpt-native")
+            self.assertIsInstance(selected, MessageCommandResponse)
+            self.assertEqual(session.model, "gpt-native")
+            self.assertIsNone(handler.config.codex.model)
+
+    def test_defaults_menu_updates_config_for_new_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            handler._native_models = lambda chat_id, user_id: [  # type: ignore[method-assign]
+                {
+                    "slug": "gpt-default",
+                    "display_name": "GPT Default",
+                    "supported_reasoning_levels": [{"effort": "medium"}, {"effort": "high"}],
+                }
+            ]
+
+            model_response = handler.handle_command("/defaults model gpt-default", 1, 2)
+            reasoning_response = handler.handle_command("/defaults reasoning high", 1, 2)
+
+            self.assertIsInstance(model_response, MessageCommandResponse)
+            self.assertIsInstance(reasoning_response, MessageCommandResponse)
+            self.assertEqual(handler.config.codex.model, "gpt-default")
+            self.assertEqual(handler.config.codex.reasoning_effort, "high")
 
     def test_help_returns_interactive_menu(self):
         with tempfile.TemporaryDirectory() as tmp:

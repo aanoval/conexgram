@@ -77,6 +77,7 @@ class GatewayApp:
             {"command": "sessions", "description": "Browse workspaces and sessions"},
             {"command": "settings", "description": "Open model and safety settings"},
             {"command": "quota", "description": "Show Codex usage and limits"},
+            {"command": "defaults", "description": "Set defaults for new sessions"},
             {"command": "profile", "description": "Manage Codex auth profiles"},
             {"command": "workspace", "description": "Show or set workspace"},
             {"command": "sandbox", "description": "Choose Codex sandbox"},

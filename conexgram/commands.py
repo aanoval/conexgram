@@ -72,9 +72,10 @@ class CommandHandler:
             "title": "Model & Mode",
             "commands": [
                 ("/settings", "Open friendly settings panel.", "/settings"),
-                ("/model", "Show or set model for this session.", "/model"),
-                ("/models", "List configured model presets.", "/models"),
-                ("/reasoning", "Set reasoning effort.", "/help cmd reasoning"),
+                ("/model", "Choose model for this session.", "/model"),
+                ("/models", "Choose model for this session.", "/models"),
+                ("/reasoning", "Choose reasoning for this session.", "/reasoning"),
+                ("/defaults", "Set defaults for new sessions.", "/defaults"),
                 ("/mode", "Set execution mode.", "/help cmd mode"),
                 ("/preset", "Apply a common setup.", "/preset list"),
                 ("/fast", "Toggle fast mode.", "/fast"),
@@ -139,6 +140,7 @@ class CommandHandler:
         "stop": "/stop\nStop the currently running Codex process.",
         "sendfile": "/sendfile <path> [caption]\nSend a local file to Telegram when the path is inside configured workspace roots.",
         "reasoning": "/reasoning default|low|medium|high|xhigh\nSet reasoning effort for this session.",
+        "defaults": "/defaults\nSet default model and reasoning for new sessions.",
         "mode": "/mode safe|workspace|full|<preset>\nSet execution mode for this session.",
         "confirm": "/confirm computer|sandbox\nConfirm enabling broad local access.",
         "profile-switch": "/profile switch <id|email|name>\nSwitch active Codex auth profile.",
@@ -381,9 +383,11 @@ class CommandHandler:
         if command == "/model":
             return self.model(chat_id, user_id, args)
         if command == "/models":
-            return self.models()
+            return self.models(chat_id, user_id, args)
         if command == "/reasoning":
             return self.reasoning(chat_id, user_id, args)
+        if command == "/defaults":
+            return self.defaults(chat_id, user_id, args)
         if command == "/mode":
             return self.mode(chat_id, user_id, args)
         if command == "/sandbox":
@@ -854,44 +858,231 @@ class CommandHandler:
         self.store.update(session)
         return f"Working directory updated: {session.working_dir}"
 
-    def model(self, chat_id: int, user_id: int, args: list[str]) -> str:
+    def model(self, chat_id: int, user_id: int, args: list[str]) -> Union[str, MessageCommandResponse]:
         session = self.ensure_session(chat_id, user_id)
-        if not args:
-            return f"Current model: {session.model or 'Codex default'}"
+        if not args or args[0].lower() in {"menu", "list"}:
+            return self.models(chat_id, user_id, [])
         raw_model = args[0].strip()
         if raw_model.lower() in {"default", "none", ""}:
             session.model = None
         else:
             model = self._resolve_model_alias(raw_model) or raw_model
             session.model = model
-            if raw_model.lower() == "spark":
-                self._set_default_model(model)
+        allowed_reasoning = self._reasoning_levels_for_model(chat_id, user_id, session.model)
+        if session.reasoning_effort and session.reasoning_effort not in allowed_reasoning:
+            session.reasoning_effort = None
         self.store.update(session)
-        return f"Model updated for this session: {session.model or 'Codex default'}"
+        return self._reasoning_menu(
+            chat_id,
+            user_id,
+            prefix=f"Model for this session: {session.model or 'Codex default'}",
+        )
 
-    def models(self) -> str:
-        presets = self.config.codex.model_presets
-        if not presets:
-            return "No model presets configured. Use /model <model-name>."
-        lines = ["Model presets:"]
-        for name, model in sorted(presets.items()):
-            lines.append(f"- {name}: {model or 'Codex default'}")
-        return "\n".join(lines)
-
-    def reasoning(self, chat_id: int, user_id: int, args: list[str]) -> str:
+    def models(self, chat_id: int, user_id: int, args: list[str]) -> MessageCommandResponse:
         session = self.ensure_session(chat_id, user_id)
-        if not args:
-            return f"Current reasoning effort: {session.reasoning_effort or 'Codex default'}"
+        models = self._native_models(chat_id, user_id)
+        keyboard: list[list[dict[str, str]]] = []
+        keyboard.append([{"text": "Codex default", "callback_data": "/model default"}])
+        for model in models[:18]:
+            slug = str(model.get("slug") or "").strip()
+            if not slug:
+                continue
+            label = str(model.get("display_name") or slug)
+            if slug == session.model:
+                label = f"* {label}"
+            keyboard.append([{"text": self._truncate(label, 52), "callback_data": f"/model {slug}"}])
+        keyboard.append([{"text": "Reasoning", "callback_data": "/reasoning"}])
+        keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
+        return MessageCommandResponse(
+            text=f"Session model: {session.model or 'Codex default'}\nChoose a model:",
+            reply_markup={"inline_keyboard": keyboard},
+        )
+
+    def reasoning(self, chat_id: int, user_id: int, args: list[str]) -> Union[str, MessageCommandResponse]:
+        session = self.ensure_session(chat_id, user_id)
+        if not args or args[0].lower() in {"menu", "list"}:
+            return self._reasoning_menu(chat_id, user_id)
         value = args[0].lower()
         if value in {"default", "none", "off"}:
             session.reasoning_effort = None
             self.store.update(session)
-            return "Reasoning effort updated: Codex default"
-        if value not in {"low", "medium", "high", "xhigh"}:
-            return "Usage: /reasoning default|low|medium|high|xhigh"
+            return MessageCommandResponse(
+                text="Session reasoning: Codex default",
+                reply_markup={"inline_keyboard": [[{"text": "Main menu", "callback_data": "/menu"}]]},
+            )
+        allowed = self._reasoning_levels_for_model(chat_id, user_id, session.model)
+        if value not in allowed:
+            return self._reasoning_menu(chat_id, user_id, prefix=f"Reasoning `{value}` is not supported here.")
         session.reasoning_effort = value
         self.store.update(session)
-        return f"Reasoning effort updated: {value}"
+        return MessageCommandResponse(
+            text=f"Session reasoning: {value}",
+            reply_markup={"inline_keyboard": [[{"text": "Main menu", "callback_data": "/menu"}]]},
+        )
+
+    def defaults(self, chat_id: int, user_id: int, args: list[str]) -> Union[str, MessageCommandResponse]:
+        if not args or args[0].lower() in {"menu", "status"}:
+            return self._defaults_menu()
+        target = args[0].lower()
+        if target == "model":
+            if len(args) < 2 or args[1].lower() in {"menu", "list"}:
+                return self._default_models_menu(chat_id, user_id)
+            value = args[1].strip()
+            model = None if value.lower() in {"default", "none", "off", ""} else (self._resolve_model_alias(value) or value)
+            self.config = replace(self.config, codex=replace(self.config.codex, model=model))
+            save_config(self.config)
+            return self._defaults_menu(prefix=f"Default model: {model or 'Codex default'}")
+        if target == "reasoning":
+            if len(args) < 2 or args[1].lower() in {"menu", "list"}:
+                return self._default_reasoning_menu(chat_id, user_id)
+            value = args[1].lower()
+            if value in {"default", "none", "off"}:
+                reasoning = None
+            elif value in self._reasoning_levels_for_model(chat_id, user_id, self.config.codex.model):
+                reasoning = value
+            else:
+                return self._default_reasoning_menu(chat_id, user_id, prefix=f"Reasoning `{value}` is not supported here.")
+            self.config = replace(self.config, codex=replace(self.config.codex, reasoning_effort=reasoning))
+            save_config(self.config)
+            return self._defaults_menu(prefix=f"Default reasoning: {reasoning or 'Codex default'}")
+        if target == "clear":
+            self.config = replace(self.config, codex=replace(self.config.codex, model=None, reasoning_effort=None))
+            save_config(self.config)
+            return self._defaults_menu(prefix="Defaults cleared.")
+        return "Usage: /defaults [model|reasoning|clear]"
+
+    def _native_models(self, chat_id: int, user_id: int) -> list[dict]:
+        profile_home = self.active_profile_home(chat_id, user_id)
+        env = self._prepare_profile_env(profile_home)
+        try:
+            result = subprocess.run(
+                [self.config.codex.binary, "debug", "models"],
+                check=False,
+                capture_output=True,
+                env=env,
+                text=True,
+                timeout=20,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                payload = json.loads(result.stdout)
+                models = payload.get("models")
+                if isinstance(models, list):
+                    visible = [
+                        item
+                        for item in models
+                        if isinstance(item, dict) and item.get("visibility") != "hide"
+                    ]
+                    return visible or [item for item in models if isinstance(item, dict)]
+        except Exception:
+            pass
+        fallback = []
+        seen = set()
+        for value in self.config.codex.model_presets.values():
+            model = self._resolve_model_alias(value)
+            if model and model not in seen:
+                fallback.append({"slug": model, "display_name": model, "supported_reasoning_levels": []})
+                seen.add(model)
+        if not fallback:
+            fallback.append({"slug": "gpt-5.3-codex-spark", "display_name": "GPT-5.3-Codex-Spark", "supported_reasoning_levels": []})
+        return fallback
+
+    def _native_model_by_slug(self, chat_id: int, user_id: int, model: Optional[str]) -> Optional[dict]:
+        if not model:
+            return None
+        for item in self._native_models(chat_id, user_id):
+            if str(item.get("slug") or "").lower() == model.lower():
+                return item
+        return None
+
+    def _reasoning_levels_for_model(self, chat_id: int, user_id: int, model: Optional[str]) -> list[str]:
+        item = self._native_model_by_slug(chat_id, user_id, model)
+        if item:
+            levels = [
+                str(level.get("effort"))
+                for level in item.get("supported_reasoning_levels") or []
+                if isinstance(level, dict) and level.get("effort")
+            ]
+            if levels:
+                return levels
+        return ["low", "medium", "high", "xhigh"]
+
+    def _reasoning_menu(
+        self,
+        chat_id: int,
+        user_id: int,
+        prefix: str = "",
+    ) -> MessageCommandResponse:
+        session = self.ensure_session(chat_id, user_id)
+        levels = self._reasoning_levels_for_model(chat_id, user_id, session.model)
+        keyboard: list[list[dict[str, str]]] = [[{"text": "Codex default", "callback_data": "/reasoning default"}]]
+        row = []
+        for level in levels:
+            label = level.upper() if level == session.reasoning_effort else level.capitalize()
+            row.append({"text": label, "callback_data": f"/reasoning {level}"})
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        keyboard.append([{"text": "Models", "callback_data": "/models"}])
+        keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
+        text = prefix or f"Session reasoning: {session.reasoning_effort or 'Codex default'}"
+        return MessageCommandResponse(text=f"{text}\nChoose reasoning:", reply_markup={"inline_keyboard": keyboard})
+
+    def _defaults_menu(self, prefix: str = "") -> MessageCommandResponse:
+        text = (
+            f"{prefix + chr(10) if prefix else ''}"
+            f"Defaults for new sessions: {self.config.codex.model or 'Codex default'} · "
+            f"{self.config.codex.reasoning_effort or 'default'}"
+        )
+        return MessageCommandResponse(
+            text=text,
+            reply_markup={
+                "inline_keyboard": [
+                    [{"text": "Default model", "callback_data": "/defaults model"}],
+                    [{"text": "Default reasoning", "callback_data": "/defaults reasoning"}],
+                    [{"text": "Clear defaults", "callback_data": "/defaults clear"}],
+                    [{"text": "Main menu", "callback_data": "/menu"}],
+                ]
+            },
+        )
+
+    def _default_models_menu(self, chat_id: int, user_id: int) -> MessageCommandResponse:
+        keyboard: list[list[dict[str, str]]] = [[{"text": "Codex default", "callback_data": "/defaults model default"}]]
+        for model in self._native_models(chat_id, user_id)[:18]:
+            slug = str(model.get("slug") or "").strip()
+            if not slug:
+                continue
+            label = str(model.get("display_name") or slug)
+            if slug == self.config.codex.model:
+                label = f"* {label}"
+            keyboard.append([{"text": self._truncate(label, 52), "callback_data": f"/defaults model {slug}"}])
+        keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
+        return MessageCommandResponse(
+            text=f"Default model: {self.config.codex.model or 'Codex default'}",
+            reply_markup={"inline_keyboard": keyboard},
+        )
+
+    def _default_reasoning_menu(
+        self,
+        chat_id: int,
+        user_id: int,
+        prefix: str = "",
+    ) -> MessageCommandResponse:
+        levels = self._reasoning_levels_for_model(chat_id, user_id, self.config.codex.model)
+        keyboard: list[list[dict[str, str]]] = [[{"text": "Codex default", "callback_data": "/defaults reasoning default"}]]
+        row = []
+        for level in levels:
+            label = level.upper() if level == self.config.codex.reasoning_effort else level.capitalize()
+            row.append({"text": label, "callback_data": f"/defaults reasoning {level}"})
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
+        text = prefix or f"Default reasoning: {self.config.codex.reasoning_effort or 'Codex default'}"
+        return MessageCommandResponse(text=text, reply_markup={"inline_keyboard": keyboard})
 
     def mode(self, chat_id: int, user_id: int, args: list[str]) -> str:
         session = self.ensure_session(chat_id, user_id)
@@ -1278,12 +1469,11 @@ class CommandHandler:
         keyboard = {
             "inline_keyboard": [
                 [
-                    {"text": "Safe", "callback_data": "/mode safe"},
-                    {"text": "Work", "callback_data": "/preset work"},
-                    {"text": "Fast", "callback_data": "/preset fast"},
+                    {"text": "Models", "callback_data": "/models"},
+                    {"text": "Reasoning", "callback_data": "/reasoning"},
                 ],
                 [
-                    {"text": "Power", "callback_data": "/preset power"},
+                    {"text": "Defaults", "callback_data": "/defaults"},
                     {"text": "Computer", "callback_data": "/computer on"},
                 ],
                 [
@@ -1736,8 +1926,9 @@ class CommandHandler:
             "/switch codex <thread_id> - switch to a Codex metadata thread\n"
             "/cwd [path] - show or set cwd before Codex thread starts\n"
             "/model [name|default] - show or set model for this session\n"
-            "/models - list configured model presets\n"
+            "/models - choose a native Codex model for this session\n"
             "/reasoning default|low|medium|high|xhigh - set reasoning effort\n"
+            "/defaults - set default model and reasoning for new sessions\n"
             "/mode safe|workspace|full|<preset> - set execution mode\n"
             "/sandbox default|read-only|workspace-write|danger-full-access - set Codex sandbox\n"
             "/approval default|never|untrusted|on-request - set Codex approval policy\n"

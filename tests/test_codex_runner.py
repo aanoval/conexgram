@@ -1,4 +1,7 @@
+import os
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -225,6 +228,56 @@ class CodexRunnerTests(unittest.TestCase):
             self.assertIn("Your Codex quota", result.text)
             self.assertIn("gpt-5.3-codex-spark", result.text)
             self.assertNotIn("Codex exited with code", result.text)
+
+    def test_timeout_is_disabled_only_for_ultra_reasoning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = dict(id="s1", scope_key="chat:1", chat_id=1, user_id=2, working_dir=tmp)
+
+            self.assertFalse(CodexRunner._timeout_enabled(Session(**base, reasoning_effort="ultra")))
+            self.assertTrue(CodexRunner._timeout_enabled(Session(**base, reasoning_effort="max")))
+            self.assertTrue(CodexRunner._timeout_enabled(Session(**base, reasoning_effort="xhigh")))
+
+    def test_stop_session_terminates_child_process_group(self):
+        if os.name != "posix":
+            self.skipTest("process-group behavior is POSIX-specific")
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            script = work / "fake-codex"
+            child_pid_path = work / "child.pid"
+            script.write_text(
+                "#!/usr/bin/env python3\n"
+                "import subprocess, sys, time\n"
+                "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+                f"open({str(child_pid_path)!r}, 'w', encoding='utf-8').write(str(child.pid))\n"
+                "print('{\"type\":\"turn.started\"}', flush=True)\n"
+                "time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+            runner = CodexRunner(CodexConfig(binary=str(script), default_working_dir=work), work / "logs")
+            session = Session(
+                id="s1",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=str(work),
+                reasoning_effort="ultra",
+            )
+            result_holder = []
+            thread = threading.Thread(target=lambda: result_holder.append(runner.run_turn(session, "hello")))
+            thread.start()
+            deadline = time.monotonic() + 5
+            while not child_pid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+
+            self.assertTrue(child_pid_path.exists())
+            child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+            self.assertTrue(runner.stop_session(session.id))
+            thread.join(timeout=8)
+
+            self.assertFalse(thread.is_alive())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(child_pid, 0)
 
 
 if __name__ == "__main__":

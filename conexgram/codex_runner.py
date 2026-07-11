@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -86,6 +87,7 @@ class CodexRunner:
             initial_thread_id=session.codex_thread_id,
             event_callback=event_callback,
             model=attempted_model,
+            timeout_enabled=self._timeout_enabled(session),
         )
         raw_lines = list(attempt.raw_lines)
         final_return_code = attempt.return_code
@@ -122,6 +124,7 @@ class CodexRunner:
                 initial_thread_id=thread_id or session.codex_thread_id,
                 event_callback=event_callback,
                 model=fallback_model,
+                timeout_enabled=self._timeout_enabled(session),
             )
             raw_lines.extend(fallback_attempt.raw_lines)
             final_return_code = fallback_attempt.return_code
@@ -177,7 +180,13 @@ class CodexRunner:
         initial_thread_id: Optional[str],
         event_callback: Optional[Callable[[dict], None]],
         model: Optional[str],
+        timeout_enabled: bool = True,
     ) -> _CodexAttempt:
+        popen_kwargs: dict[str, object] = {}
+        if os.name == "posix":
+            popen_kwargs["start_new_session"] = True
+        elif os.name == "nt":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         process = subprocess.Popen(
             command,
             cwd=str(working_dir),
@@ -187,6 +196,7 @@ class CodexRunner:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            **popen_kwargs,
         )
         with self._lock:
             self._processes[session_id] = process
@@ -200,10 +210,12 @@ class CodexRunner:
         def terminate_on_timeout() -> None:
             nonlocal timed_out
             timed_out = True
-            process.terminate()
+            self._terminate_process_group(process)
 
-        timer = threading.Timer(self.config.max_turn_seconds, terminate_on_timeout)
-        timer.start()
+        timer: Optional[threading.Timer] = None
+        if timeout_enabled:
+            timer = threading.Timer(self.config.max_turn_seconds, terminate_on_timeout)
+            timer.start()
         try:
             assert process.stdin is not None
             process.stdin.write(prompt)
@@ -229,7 +241,8 @@ class CodexRunner:
                             agent_messages.append(text.strip())
             return_code = process.wait()
         finally:
-            timer.cancel()
+            if timer is not None:
+                timer.cancel()
             if process.stdout is not None:
                 process.stdout.close()
             with self._lock:
@@ -250,7 +263,7 @@ class CodexRunner:
             process = self._processes.get(session_id)
         if process is None or process.poll() is not None:
             return False
-        process.terminate()
+        self._terminate_process_group(process)
         return True
 
     def stop_current(self) -> bool:
@@ -258,9 +271,34 @@ class CodexRunner:
             items = list(self._processes.values())
         for process in items:
             if process.poll() is None:
-                process.terminate()
+                self._terminate_process_group(process)
                 return True
         return False
+
+    @staticmethod
+    def _terminate_process_group(process: subprocess.Popen[str], grace_seconds: float = 5.0) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+            process.wait(timeout=grace_seconds)
+        except ProcessLookupError:
+            return
+        except subprocess.TimeoutExpired:
+            try:
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+            except ProcessLookupError:
+                pass
+
+    @staticmethod
+    def _timeout_enabled(session: Session) -> bool:
+        return (session.reasoning_effort or "").strip().lower() != "ultra"
 
     def _build_command(
         self,

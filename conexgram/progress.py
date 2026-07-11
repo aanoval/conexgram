@@ -17,6 +17,8 @@ LOG = logging.getLogger(__name__)
 class ProgressNotifier:
     """Send Telegram typing actions and optional progress messages for a turn."""
 
+    CHECKPOINT_INTERVAL_SECONDS = 30 * 60
+
     def __init__(
         self,
         telegram: TelegramClient,
@@ -59,6 +61,8 @@ class ProgressNotifier:
         typing_enabled = self._effective_bool(session.typing_indicator, self.config.typing_indicator)
         messages_enabled = self._effective_bool(session.progress_messages, self.config.progress_messages)
         last_message_at = time.monotonic()
+        last_checkpoint_at = handle.started_at
+        checkpoint_mode = self._checkpoint_mode(session)
 
         while not handle.stop_event.is_set():
             if typing_enabled:
@@ -68,6 +72,15 @@ class ProgressNotifier:
                     LOG.debug("Failed to send typing indicator: %s", exc)
 
             now = time.monotonic()
+            if (
+                messages_enabled
+                and checkpoint_mode
+                and now - last_checkpoint_at >= self.CHECKPOINT_INTERVAL_SECONDS
+            ):
+                self._publish_checkpoint(handle, chat_id, reply_to_message_id)
+                last_checkpoint_at = now
+                last_message_at = now
+
             if messages_enabled and now - last_message_at >= self.config.progress_interval_seconds:
                 status = handle.latest_status
                 if not status:
@@ -83,6 +96,24 @@ class ProgressNotifier:
 
             wait_seconds = self.config.typing_interval_seconds if typing_enabled else 1
             handle.stop_event.wait(wait_seconds)
+
+    def _publish_checkpoint(
+        self,
+        handle: "ProgressHandle",
+        chat_id: int,
+        reply_to_message_id: int,
+    ) -> None:
+        interim = handle.latest_agent_message or handle.latest_status
+        if not interim:
+            interim = "Codex is still working and has not produced an interim summary yet."
+        checkpoint = (
+            f"Interim update after {self._format_duration(handle.elapsed_seconds)}:\n\n"
+            f"{self._compact(interim, limit=3500)}"
+        )
+        self._upsert_progress_message(handle, chat_id, checkpoint, reply_to_message_id)
+        handle.message_id = None
+        continuing = handle.latest_status or "Codex is continuing the task."
+        self._upsert_progress_message(handle, chat_id, continuing, reply_to_message_id)
 
     def _upsert_progress_message(
         self,
@@ -109,6 +140,10 @@ class ProgressNotifier:
     @staticmethod
     def _effective_bool(value: Optional[bool], default: bool) -> bool:
         return default if value is None else bool(value)
+
+    @staticmethod
+    def _checkpoint_mode(session: Session) -> bool:
+        return (session.reasoning_effort or "").strip().lower() in {"max", "ultra"}
 
     @staticmethod
     def event_status(event: dict) -> str:
@@ -259,13 +294,26 @@ class ProgressHandle:
         self.message_id: Optional[int] = None
         self._status_lock = threading.Lock()
         self._latest_status = ""
+        self._latest_agent_message = ""
 
     @property
     def latest_status(self) -> str:
         with self._status_lock:
             return self._latest_status
 
+    @property
+    def latest_agent_message(self) -> str:
+        with self._status_lock:
+            return self._latest_agent_message
+
     def update_from_event(self, event: dict) -> None:
+        item = event.get("item")
+        if event.get("type") == "item.completed" and isinstance(item, dict):
+            if item.get("type") == "agent_message":
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    with self._status_lock:
+                        self._latest_agent_message = text.strip()
         status = ProgressNotifier.event_status(event)
         if not status:
             return

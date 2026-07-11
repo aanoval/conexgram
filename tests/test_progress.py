@@ -5,6 +5,7 @@ from typing import Optional
 
 from conexgram.config import ProgressConfig
 from conexgram.progress import ProgressHandle, ProgressNotifier
+from conexgram.session_store import Session
 
 
 class FakeTelegram:
@@ -78,6 +79,37 @@ class ProgressNotifierTests(unittest.TestCase):
         notifier.complete(handle, 10, success=False)
 
         self.assertEqual(telegram.edited, [(10, 101, "Stopped after 5s.")])
+
+    def test_ultra_checkpoint_preserves_interim_and_starts_new_progress_message(self):
+        telegram = FakeTelegram()
+        notifier = ProgressNotifier(telegram, ProgressConfig())
+        handle = ProgressHandle(threading.Event())
+        handle.message_id = 101
+        handle.started_at = time.monotonic() - 1800
+        handle.update_from_event({
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "Typecheck passed; Rust tests are still running."},
+        })
+        handle.update_from_event({
+            "type": "item.started",
+            "item": {"type": "command_execution", "command": "cargo test"},
+        })
+
+        notifier._publish_checkpoint(handle, 10, 99)
+
+        self.assertEqual(len(telegram.edited), 1)
+        self.assertEqual(telegram.edited[0][1], 101)
+        self.assertIn("Interim update after 30m 0s", telegram.edited[0][2])
+        self.assertIn("Typecheck passed", telegram.edited[0][2])
+        self.assertEqual(telegram.sent, [(10, "Codex is running verification.", 99)])
+        self.assertEqual(handle.message_id, 101)
+
+    def test_checkpoint_mode_only_applies_to_max_and_ultra(self):
+        base = dict(id="s1", scope_key="chat:1", chat_id=1, user_id=2, working_dir="/tmp")
+
+        self.assertTrue(ProgressNotifier._checkpoint_mode(Session(**base, reasoning_effort="max")))
+        self.assertTrue(ProgressNotifier._checkpoint_mode(Session(**base, reasoning_effort="ULTRA")))
+        self.assertFalse(ProgressNotifier._checkpoint_mode(Session(**base, reasoning_effort="xhigh")))
 
 
 if __name__ == "__main__":

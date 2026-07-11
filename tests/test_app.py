@@ -234,7 +234,7 @@ class GatewayAppTests(unittest.TestCase):
             self.assertIn({"command": "menu", "description": "Open the Conexgram command menu"}, fake.commands)
             self.assertIn({"command": "sessions", "description": "Browse workspaces and sessions"}, fake.commands)
 
-    def test_final_response_edits_progress_message_and_sends_remaining_chunks(self):
+    def test_final_response_sends_new_message_chunks(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             app = GatewayApp(AppConfig(
@@ -249,13 +249,12 @@ class GatewayAppTests(unittest.TestCase):
             fake = FakeTelegram()
             app.telegram = fake  # type: ignore[assignment]
 
-            app._send_final_response(1, "a" * 150, progress_message_id=55)
+            app._send_final_response(1, "a" * 150)
 
-            self.assertEqual(len(fake.edited), 1)
-            self.assertEqual(fake.edited[0][1], 55)
-            self.assertEqual(fake.edited[0][2], "a" * 100)
-            self.assertEqual(len(fake.sent), 1)
-            self.assertEqual(fake.sent[0][1], "a" * 50)
+            self.assertEqual(fake.edited, [])
+            self.assertEqual(len(fake.sent), 2)
+            self.assertEqual(fake.sent[0][1], "a" * 100)
+            self.assertEqual(fake.sent[1][1], "a" * 50)
 
     def test_cleanup_uploads_deletes_expired_files_only(self):
         with tempfile.TemporaryDirectory() as tmp:

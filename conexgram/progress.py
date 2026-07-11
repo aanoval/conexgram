@@ -38,6 +38,17 @@ class ProgressNotifier:
         thread.start()
         return handle
 
+    def complete(self, handle: "ProgressHandle", chat_id: int, success: bool = True) -> None:
+        if handle.message_id is None:
+            return
+        label = "Completed in" if success else "Stopped after"
+        text = f"{label} {self._format_duration(handle.elapsed_seconds)}."
+        try:
+            self.telegram.edit_message_text(chat_id, handle.message_id, text)
+        except TelegramApiError as exc:
+            if "message is not modified" not in str(exc).lower():
+                LOG.debug("Failed to complete progress message: %s", exc)
+
     def _run(
         self,
         session: Session,
@@ -226,12 +237,24 @@ class ProgressNotifier:
             return cleaned[: limit - 3].rstrip() + "..."
         return cleaned
 
+    @staticmethod
+    def _format_duration(elapsed_seconds: float) -> str:
+        total_seconds = max(0, int(elapsed_seconds))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours}h {minutes}m {seconds}s"
+        if minutes:
+            return f"{minutes}m {seconds}s"
+        return f"{seconds}s"
+
 
 class ProgressHandle:
     """Stop handle returned by ProgressNotifier.start."""
 
     def __init__(self, stop_event: threading.Event) -> None:
         self.stop_event = stop_event
+        self.started_at = time.monotonic()
         self.thread: Optional[threading.Thread] = None
         self.message_id: Optional[int] = None
         self._status_lock = threading.Lock()
@@ -248,6 +271,10 @@ class ProgressHandle:
             return
         with self._status_lock:
             self._latest_status = status
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return time.monotonic() - self.started_at
 
     def stop(self) -> None:
         self.stop_event.set()

@@ -246,6 +246,8 @@ class GatewayApp:
         finally:
             progress_handle.stop()
 
+        self.progress.complete(progress_handle, message.chat_id, success=result.return_code == 0)
+
         if result.thread_id and not session.codex_thread_id:
             session.codex_thread_id = result.thread_id
         session.turn_count += 1
@@ -261,7 +263,7 @@ class GatewayApp:
             prefix = f"Codex exited with code {result.return_code}.\n\n"
         text_to_send = (prefix + response_text).strip()
         if text_to_send:
-            self._send_final_response(message.chat_id, text_to_send, progress_handle.message_id)
+            self._send_final_response(message.chat_id, text_to_send)
 
         for directive in attachment_directives:
             attachment = self._prepare_attachment(directive, session)
@@ -424,19 +426,8 @@ class GatewayApp:
         self,
         chat_id: int,
         text: str,
-        progress_message_id: Optional[int] = None,
     ) -> None:
-        chunks = split_message(text, self.config.gateway.max_telegram_message_chars)
-        if not chunks:
-            return
-        if progress_message_id is None:
-            self._send(chat_id, text)
-            return
-        if not self._edit_callback_message(chat_id, progress_message_id, chunks[0]):
-            self._send(chat_id, text)
-            return
-        for chunk in chunks[1:]:
-            self._send(chat_id, chunk)
+        self._send(chat_id, text)
 
     def _edit_callback_message(
         self,

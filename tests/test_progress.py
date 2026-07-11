@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 from typing import Optional
 
@@ -55,6 +56,28 @@ class ProgressNotifierTests(unittest.TestCase):
 
         self.assertEqual(handle.latest_status, "Codex finished inspecting the workspace.")
         self.assertNotIn("sed -n", handle.latest_status)
+
+    def test_complete_replaces_progress_with_elapsed_time(self):
+        telegram = FakeTelegram()
+        notifier = ProgressNotifier(telegram, ProgressConfig())
+        handle = ProgressHandle(threading.Event())
+        handle.message_id = 101
+        handle.started_at = time.monotonic() - 127
+
+        notifier.complete(handle, 10)
+
+        self.assertEqual(telegram.edited, [(10, 101, "Completed in 2m 7s.")])
+
+    def test_complete_marks_failed_turn_as_stopped(self):
+        telegram = FakeTelegram()
+        notifier = ProgressNotifier(telegram, ProgressConfig())
+        handle = ProgressHandle(threading.Event())
+        handle.message_id = 101
+        handle.started_at = time.monotonic() - 5
+
+        notifier.complete(handle, 10, success=False)
+
+        self.assertEqual(telegram.edited, [(10, 101, "Stopped after 5s.")])
 
 
 if __name__ == "__main__":

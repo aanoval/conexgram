@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import http.client
 import json
-import math
 import logging
+import math
 import mimetypes
 import shutil
 import urllib.error
@@ -13,6 +14,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 LOG = logging.getLogger(__name__)
 
@@ -139,15 +141,20 @@ class TelegramClient:
     ) -> None:
         upload_timeout = self._document_upload_timeout(file_path)
         if self.local_bot_api:
-            payload: dict[str, Any] = {
-                "chat_id": chat_id,
-                "document": file_path.expanduser().resolve().as_uri(),
+            payload: dict[str, str] = {
+                "chat_id": str(chat_id),
             }
             if caption:
                 payload["caption"] = caption
             if reply_to_message_id is not None:
-                payload["reply_parameters"] = {"message_id": reply_to_message_id}
-            self._request("sendDocument", payload, timeout=upload_timeout)
+                payload["reply_parameters"] = json.dumps({"message_id": reply_to_message_id})
+            self._streaming_multipart_request(
+                "sendDocument",
+                payload,
+                "document",
+                file_path,
+                timeout=upload_timeout,
+            )
             return
         payload: dict[str, str] = {
             "chat_id": str(chat_id),
@@ -390,6 +397,73 @@ class TelegramClient:
             method="POST",
         )
         return self._execute(request, timeout)
+
+    def _streaming_multipart_request(
+        self,
+        method: str,
+        fields: dict[str, str],
+        file_field: str,
+        file_path: Path,
+        timeout: int,
+    ) -> Any:
+        boundary = f"----Conexgram{uuid.uuid4().hex}"
+        prefix = bytearray()
+        for name, value in fields.items():
+            prefix.extend(f"--{boundary}\r\n".encode("utf-8"))
+            prefix.extend(
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8")
+            )
+            prefix.extend(value.encode("utf-8"))
+            prefix.extend(b"\r\n")
+
+        resolved_path = file_path.expanduser().resolve()
+        filename = resolved_path.name.replace('"', "_")
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        prefix.extend(f"--{boundary}\r\n".encode("utf-8"))
+        prefix.extend(
+            (
+                f'Content-Disposition: form-data; name="{file_field}"; '
+                f'filename="{filename}"\r\n'
+            ).encode("utf-8")
+        )
+        prefix.extend(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+        suffix = f"\r\n--{boundary}--\r\n".encode("utf-8")
+        content_length = len(prefix) + resolved_path.stat().st_size + len(suffix)
+
+        parsed_url = urlsplit(self.base_url)
+        connection_class = (
+            http.client.HTTPSConnection
+            if parsed_url.scheme == "https"
+            else http.client.HTTPConnection
+        )
+        connection = connection_class(parsed_url.hostname, parsed_url.port, timeout=timeout)
+        request_path = f"{parsed_url.path.rstrip('/')}/{method}"
+        try:
+            connection.putrequest("POST", request_path)
+            connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+            connection.putheader("Content-Length", str(content_length))
+            connection.endheaders()
+            connection.send(prefix)
+            with resolved_path.open("rb") as source:
+                while chunk := source.read(256 * 1024):
+                    connection.send(chunk)
+            connection.send(suffix)
+            response = connection.getresponse()
+            body = response.read().decode("utf-8", errors="replace")
+        except (OSError, TimeoutError, http.client.HTTPException) as exc:
+            raise TelegramApiError(f"Telegram network error: {exc}") from exc
+        finally:
+            connection.close()
+
+        if response.status >= 400:
+            raise TelegramApiError(f"Telegram HTTP {response.status}: {body}")
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise TelegramApiError("Telegram API returned an invalid JSON response") from exc
+        if not parsed.get("ok"):
+            raise TelegramApiError(f"Telegram API error: {parsed}")
+        return parsed.get("result")
 
     def _execute(self, request: urllib.request.Request, timeout: int) -> Any:
         try:

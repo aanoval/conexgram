@@ -17,15 +17,88 @@ class TelegramClientTests(unittest.TestCase):
                 local_bot_api=True,
             )
 
-            with patch.object(client, "_request", return_value={}) as request:
+            with patch.object(client, "_streaming_multipart_request", return_value={}) as request:
                 client.send_document(123, path, caption="movie")
 
-            method, payload = request.call_args.args[:2]
+            method, payload, file_field, sent_path = request.call_args.args[:4]
             self.assertEqual(method, "sendDocument")
-            self.assertEqual(payload["chat_id"], 123)
-            self.assertEqual(payload["document"], path.resolve().as_uri())
+            self.assertEqual(payload["chat_id"], "123")
+            self.assertEqual(file_field, "document")
+            self.assertEqual(sent_path, path)
             self.assertEqual(payload["caption"], "movie")
             self.assertEqual(request.call_args.kwargs["timeout"], 600)
+
+    def test_streaming_multipart_sends_file_in_chunks(self):
+        class FakeResponse:
+            status = 200
+
+            @staticmethod
+            def read():
+                return b'{"ok":true,"result":{"message_id":1}}'
+
+        class FakeConnection:
+            instance = None
+
+            def __init__(self, host, port, timeout):
+                self.host = host
+                self.port = port
+                self.timeout = timeout
+                self.sent = []
+                self.headers = {}
+                FakeConnection.instance = self
+
+            def putrequest(self, method, path):
+                self.method = method
+                self.path = path
+
+            def putheader(self, name, value):
+                self.headers[name] = value
+
+            def endheaders(self):
+                pass
+
+            def send(self, data):
+                self.sent.append(bytes(data))
+
+            def getresponse(self):
+                return FakeResponse()
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large.bin"
+            path.write_bytes(b"x" * (600 * 1024))
+            client = TelegramClient(
+                "token",
+                api_base_url="http://127.0.0.1:8081",
+                local_bot_api=True,
+            )
+
+            with patch("http.client.HTTPConnection", FakeConnection):
+                client._streaming_multipart_request(
+                    "sendDocument",
+                    {"chat_id": "123"},
+                    "document",
+                    path,
+                    timeout=600,
+                )
+
+            connection = FakeConnection.instance
+            assert connection is not None
+            self.assertEqual(connection.host, "127.0.0.1")
+            self.assertEqual(connection.port, 8081)
+            self.assertEqual(connection.path, "/bottoken/sendDocument")
+            self.assertEqual(connection.timeout, 600)
+            self.assertEqual(
+                connection.headers["Content-Length"],
+                str(sum(map(len, connection.sent))),
+            )
+            file_chunks = connection.sent[1:-1]
+            self.assertEqual(
+                [len(chunk) for chunk in file_chunks],
+                [256 * 1024, 256 * 1024, 88 * 1024],
+            )
 
     def test_large_document_upload_timeout_scales_with_file_size(self):
         with tempfile.TemporaryDirectory() as tmp:

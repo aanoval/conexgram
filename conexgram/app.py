@@ -505,8 +505,14 @@ class GatewayApp:
             return f"Attachment file not found: {requested}"
         if not requested.is_file():
             return f"Attachment path is not a file: {requested}"
-        if not self.commands._path_allowed(requested):
-            return f"Attachment file is outside configured workspace roots: {requested}"
+        access_denial = self.commands._attachment_access_denial(session, requested)
+        if access_denial == "full_access_required":
+            return (
+                "Attachment file is outside configured workspace roots and requires "
+                f"owner full access: {requested}"
+            )
+        if access_denial == "owner_required":
+            return "Only the Telegram owner can send attachments outside configured workspace roots."
 
         size = requested.stat().st_size
         max_bytes = self.config.gateway.max_upload_bytes
@@ -514,6 +520,14 @@ class GatewayApp:
             return (
                 f"Attachment file too large: {CommandHandler._format_bytes(size)}. "
                 f"Limit: {CommandHandler._format_bytes(max_bytes)}."
+            )
+        if not self.commands._path_allowed(requested):
+            LOG.info(
+                "Approved external attachment for owner full-access session=%s user=%s path=%s size=%s",
+                session.id,
+                session.user_id,
+                requested,
+                size,
             )
 
         caption = directive.caption

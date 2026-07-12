@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shlex
 import shutil
 import os
@@ -23,6 +24,8 @@ from .codex_index import CodexIndex, CodexThread
 from .config import AppConfig
 from .config import TelegramConfig, save_config
 from .session_store import ConnectedUser, Session, SessionStore
+
+LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -1843,18 +1846,21 @@ class CommandHandler:
     def sendfile(self, chat_id: int, user_id: int, args: list[str]) -> Union[str, FileCommandResponse]:
         if not args:
             return "Usage: /sendfile <path> [caption]"
+        session = self.ensure_session(chat_id, user_id)
         raw_path = Path(args[0]).expanduser()
         if raw_path.is_absolute():
             requested = raw_path.resolve()
         else:
-            session = self.ensure_session(chat_id, user_id)
             requested = (Path(session.working_dir) / raw_path).resolve()
         if not requested.exists():
             return f"File not found: {requested}"
         if not requested.is_file():
             return f"Not a file: {requested}"
-        if not self._path_allowed(requested):
-            return f"File is outside configured workspace roots: {requested}"
+        access_denial = self._attachment_access_denial(session, requested)
+        if access_denial == "full_access_required":
+            return f"File is outside configured workspace roots and requires owner full access: {requested}"
+        if access_denial == "owner_required":
+            return "Only the Telegram owner can send files outside configured workspace roots."
 
         size = requested.stat().st_size
         max_bytes = self.config.gateway.max_upload_bytes
@@ -1862,6 +1868,14 @@ class CommandHandler:
             return (
                 f"File too large: {self._format_bytes(size)}. "
                 f"Limit: {self._format_bytes(max_bytes)}."
+            )
+        if not self._path_allowed(requested):
+            LOG.info(
+                "Approved external file for owner full-access session=%s user=%s path=%s size=%s",
+                session.id,
+                session.user_id,
+                requested,
+                size,
             )
 
         caption = " ".join(args[1:]).strip() or None
@@ -2203,6 +2217,15 @@ class CommandHandler:
             except ValueError:
                 continue
         return False
+
+    def _attachment_access_denial(self, session: Session, path: Path) -> Optional[str]:
+        if self._path_allowed(path):
+            return None
+        if not self._session_full_access(session):
+            return "full_access_required"
+        if not self.is_owner(chat_id=session.chat_id, user_id=session.user_id):
+            return "owner_required"
+        return None
 
     def _session_full_access(self, session: Session) -> bool:
         if session.full_access is not None:

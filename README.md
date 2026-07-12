@@ -298,6 +298,10 @@ Full command set:
 - `/stop` — stop the running Codex process
 - `/help` — show help
 
+Files inside configured workspace roots can be sent by allowed users. Files outside those roots
+require a full-access session and can only be sent by the Telegram owner; the configured upload
+size limit still applies.
+
 Any non-command text is forwarded to the active Codex session.
 
 ## Voice and audio transcription

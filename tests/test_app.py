@@ -16,7 +16,12 @@ from conexgram.telegram_api import TelegramMessage
 def make_app(tmp: str, max_upload_bytes: int = 1024) -> GatewayApp:
     root = Path(tmp)
     config = AppConfig(
-        telegram=TelegramConfig(bot_token="token", allowed_user_ids={2}),
+        telegram=TelegramConfig(
+            bot_token="token",
+            allowed_user_ids={2},
+            owner_user_id=2,
+            owner_chat_id=1,
+        ),
         codex=CodexConfig(binary="codex", default_working_dir=root),
         gateway=GatewayConfig(state_dir=root / "state", max_upload_bytes=max_upload_bytes),
         config_path=root / "config.json",
@@ -105,6 +110,67 @@ class GatewayAppTests(unittest.TestCase):
 
             self.assertIsInstance(response, str)
             self.assertIn("Attachment file too large", response)
+
+    def test_prepare_attachment_allows_generated_image_for_full_access_owner(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external:
+            app = make_app(tmp)
+            path = Path(external) / "generated.png"
+            path.write_bytes(b"png")
+            session = Session(
+                id="s1",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=tmp,
+                mode="full",
+                full_access=True,
+            )
+
+            response = app._prepare_attachment(AttachmentDirective(str(path)), session)
+
+            self.assertIsInstance(response, FileCommandResponse)
+            assert isinstance(response, FileCommandResponse)
+            self.assertEqual(response.path, path.resolve())
+
+    def test_prepare_attachment_rejects_external_file_for_non_owner(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external:
+            app = make_app(tmp)
+            path = Path(external) / "secret.txt"
+            path.write_text("secret", encoding="utf-8")
+            session = Session(
+                id="s2",
+                scope_key="chat:2",
+                chat_id=2,
+                user_id=3,
+                working_dir=tmp,
+                mode="full",
+                full_access=True,
+            )
+
+            response = app._prepare_attachment(AttachmentDirective(str(path)), session)
+
+            self.assertIsInstance(response, str)
+            self.assertIn("Only the Telegram owner", response)
+
+    def test_prepare_attachment_rejects_symlink_escape_without_full_access(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external:
+            app = make_app(tmp)
+            target = Path(external) / "secret.txt"
+            target.write_text("secret", encoding="utf-8")
+            link = Path(tmp) / "linked-secret.txt"
+            link.symlink_to(target)
+            session = Session(
+                id="s1",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=tmp,
+            )
+
+            response = app._prepare_attachment(AttachmentDirective(str(link)), session)
+
+            self.assertIsInstance(response, str)
+            self.assertIn("requires owner full access", response)
 
     def test_media_upload_is_queued_as_codex_context(self):
         with tempfile.TemporaryDirectory() as tmp:

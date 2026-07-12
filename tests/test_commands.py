@@ -137,6 +137,46 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertIsInstance(response, str)
             self.assertIn("File too large", response)
 
+    def test_sendfile_allows_external_file_for_full_access_owner(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external:
+            path = Path(external) / "generated.png"
+            path.write_bytes(b"png")
+            handler = make_handler(tmp)
+            session = handler.ensure_session(1, 2)
+            session.full_access = True
+            session.mode = "full"
+
+            response = handler.sendfile(1, 2, [str(path)])
+
+            self.assertIsInstance(response, FileCommandResponse)
+            assert isinstance(response, FileCommandResponse)
+            self.assertEqual(response.path, path.resolve())
+
+    def test_sendfile_rejects_external_file_without_full_access(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external:
+            path = Path(external) / "generated.png"
+            path.write_bytes(b"png")
+            handler = make_handler(tmp)
+
+            response = handler.sendfile(1, 2, [str(path)])
+
+            self.assertIsInstance(response, str)
+            self.assertIn("requires owner full access", response)
+
+    def test_sendfile_rejects_external_file_for_non_owner(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external:
+            path = Path(external) / "generated.png"
+            path.write_bytes(b"png")
+            handler = make_handler(tmp)
+            session = handler.ensure_session(2, 3)
+            session.full_access = True
+            session.mode = "full"
+
+            response = handler.sendfile(2, 3, [str(path)])
+
+            self.assertIsInstance(response, str)
+            self.assertIn("Only the Telegram owner", response)
+
     def test_computer_access_requires_confirmation(self):
         with tempfile.TemporaryDirectory() as tmp:
             handler = make_handler(tmp)

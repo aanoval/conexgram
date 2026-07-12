@@ -25,6 +25,17 @@ class TelegramClientTests(unittest.TestCase):
             self.assertEqual(payload["chat_id"], 123)
             self.assertEqual(payload["document"], path.resolve().as_uri())
             self.assertEqual(payload["caption"], "movie")
+            self.assertEqual(request.call_args.kwargs["timeout"], 600)
+
+    def test_large_document_upload_timeout_scales_with_file_size(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large.zip"
+            path.touch()
+            with patch.object(Path, "stat") as stat:
+                stat.return_value.st_size = 170 * 1024 * 1024
+                timeout = TelegramClient._document_upload_timeout(path)
+
+            self.assertEqual(timeout, 800)
 
     def test_local_download_copies_absolute_get_file_path(self):
         with tempfile.TemporaryDirectory() as tmp:

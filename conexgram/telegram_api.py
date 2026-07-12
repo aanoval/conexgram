@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import logging
 import mimetypes
 import shutil
@@ -136,6 +137,7 @@ class TelegramClient:
         caption: Optional[str] = None,
         reply_to_message_id: Optional[int] = None,
     ) -> None:
+        upload_timeout = self._document_upload_timeout(file_path)
         if self.local_bot_api:
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
@@ -145,7 +147,7 @@ class TelegramClient:
                 payload["caption"] = caption
             if reply_to_message_id is not None:
                 payload["reply_parameters"] = {"message_id": reply_to_message_id}
-            self._request("sendDocument", payload, timeout=120)
+            self._request("sendDocument", payload, timeout=upload_timeout)
             return
         payload: dict[str, str] = {
             "chat_id": str(chat_id),
@@ -154,7 +156,21 @@ class TelegramClient:
             payload["caption"] = caption
         if reply_to_message_id is not None:
             payload["reply_parameters"] = json.dumps({"message_id": reply_to_message_id})
-        self._multipart_request("sendDocument", payload, "document", file_path, timeout=120)
+        self._multipart_request(
+            "sendDocument",
+            payload,
+            "document",
+            file_path,
+            timeout=upload_timeout,
+        )
+
+    @staticmethod
+    def _document_upload_timeout(file_path: Path) -> int:
+        # Large uploads can spend several minutes transferring from the Bot API
+        # server to Telegram even when local mode passes the file by path.
+        size = file_path.stat().st_size
+        transfer_seconds = math.ceil(size / (256 * 1024))
+        return min(7200, max(600, 120 + transfer_seconds))
 
     def parse_text_message(self, update: dict[str, Any]) -> Optional[TelegramMessage]:
         message = update.get("message")

@@ -302,6 +302,11 @@ Files inside configured workspace roots can be sent by allowed users. Files outs
 require a full-access session and can only be sent by the Telegram owner; the configured upload
 size limit still applies.
 
+To use a self-hosted Telegram Bot API server, set `telegram.api_base_url` to its HTTP endpoint and
+set `telegram.local_bot_api` to `true`. Local mode sends documents by `file://` path instead of
+buffering the entire upload in Conexgram memory. Keep the server bound to localhost or a private
+network, and migrate only that bot token with Telegram's `logOut` method before switching endpoints.
+
 Any non-command text is forwarded to the active Codex session.
 
 ## Voice and audio transcription

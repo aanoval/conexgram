@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from conexgram.config import load_config
+from conexgram.config import load_config, save_config
 
 
 class ConfigTests(unittest.TestCase):
@@ -19,6 +19,8 @@ class ConfigTests(unittest.TestCase):
                             "bot_token": "123:abc",
                             "allowed_user_ids": [1],
                             "allowed_chat_ids": [],
+                            "api_base_url": "http://127.0.0.1:8081/",
+                            "local_bot_api": True,
                         },
                         "codex": {
                             "binary": shutil.which("python3") or "python3",
@@ -55,6 +57,8 @@ class ConfigTests(unittest.TestCase):
             config = load_config(config_path)
 
             self.assertEqual(config.codex.max_turn_seconds, 120)
+            self.assertEqual(config.telegram.api_base_url, "http://127.0.0.1:8081")
+            self.assertTrue(config.telegram.local_bot_api)
             self.assertEqual(config.gateway.worker_count, 2)
             self.assertEqual(config.gateway.max_log_days, 7)
             self.assertEqual(config.gateway.max_log_mb, 50)
@@ -68,6 +72,11 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.uploads.retention_hours, 6)
             self.assertEqual(config.uploads.cleanup_interval_minutes, 30)
             self.assertTrue(config.uploads.keep_transcripts)
+
+            save_config(config)
+            saved = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["telegram"]["api_base_url"], "http://127.0.0.1:8081")
+            self.assertTrue(saved["telegram"]["local_bot_api"])
 
 
 if __name__ == "__main__":

@@ -5,7 +5,9 @@
       123456789
     ],
     "allowed_chat_ids": [],
-    "poll_timeout_seconds": 30
+    "poll_timeout_seconds": 30,
+    "api_base_url": "https://api.telegram.org",
+    "local_bot_api": false
   },
   "codex": {
     "binary": "codex",

@@ -7,6 +7,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from .paths import DEFAULT_CONFIG_PATH, DEFAULT_STATE_DIR, ensure_dir, expand_path
 
@@ -19,6 +20,8 @@ class TelegramConfig:
     owner_user_id: Optional[int] = None
     owner_chat_id: Optional[int] = None
     poll_timeout_seconds: int = 30
+    api_base_url: str = "https://api.telegram.org"
+    local_bot_api: bool = False
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,8 @@ def example_config_text() -> str:
             "owner_user_id": None,
             "owner_chat_id": None,
             "poll_timeout_seconds": 30,
+            "api_base_url": "https://api.telegram.org",
+            "local_bot_api": False,
         },
         "codex": {
             "binary": "codex",
@@ -194,6 +199,8 @@ def save_config(config: AppConfig) -> None:
             "owner_user_id": config.telegram.owner_user_id,
             "owner_chat_id": config.telegram.owner_chat_id,
             "poll_timeout_seconds": config.telegram.poll_timeout_seconds,
+            "api_base_url": config.telegram.api_base_url,
+            "local_bot_api": config.telegram.local_bot_api,
         },
         "codex": {
             "binary": config.codex.binary,
@@ -284,6 +291,10 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     owner_chat_id = telegram_raw.get("owner_chat_id")
     owner_user_id = int(owner_user_id) if owner_user_id not in (None, "") else None
     owner_chat_id = int(owner_chat_id) if owner_chat_id not in (None, "") else None
+    api_base_url = str(telegram_raw.get("api_base_url", "https://api.telegram.org")).strip().rstrip("/")
+    parsed_api_url = urlparse(api_base_url)
+    if parsed_api_url.scheme not in {"http", "https"} or not parsed_api_url.netloc:
+        raise ValueError("telegram.api_base_url must be an absolute HTTP(S) URL")
 
     codex_binary = str(codex_raw.get("binary", "codex")).strip() or "codex"
     if shutil.which(codex_binary) is None:
@@ -315,6 +326,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
             owner_user_id=owner_user_id,
             owner_chat_id=owner_chat_id,
             poll_timeout_seconds=int(telegram_raw.get("poll_timeout_seconds", 30)),
+            api_base_url=api_base_url,
+            local_bot_api=bool(telegram_raw.get("local_bot_api", False)),
         ),
         codex=CodexConfig(
             binary=codex_binary,

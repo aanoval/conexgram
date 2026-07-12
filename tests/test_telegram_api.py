@@ -1,10 +1,58 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from conexgram.telegram_api import TelegramApiError, TelegramClient
 
 
 class TelegramClientTests(unittest.TestCase):
+    def test_local_send_document_uses_file_uri_without_multipart_buffer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "movie.mp4"
+            path.write_bytes(b"video")
+            client = TelegramClient(
+                "token",
+                api_base_url="http://127.0.0.1:8081",
+                local_bot_api=True,
+            )
+
+            with patch.object(client, "_request", return_value={}) as request:
+                client.send_document(123, path, caption="movie")
+
+            method, payload = request.call_args.args[:2]
+            self.assertEqual(method, "sendDocument")
+            self.assertEqual(payload["chat_id"], 123)
+            self.assertEqual(payload["document"], path.resolve().as_uri())
+            self.assertEqual(payload["caption"], "movie")
+
+    def test_local_download_copies_absolute_get_file_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "telegram-local.bin"
+            destination = root / "download" / "copy.bin"
+            source.write_bytes(b"payload")
+            client = TelegramClient(
+                "token",
+                api_base_url="http://127.0.0.1:8081",
+                local_bot_api=True,
+            )
+
+            with patch.object(client, "_request", return_value={"file_path": str(source)}):
+                result = client.download_file("file-id", destination)
+
+            self.assertEqual(result, destination)
+            self.assertEqual(destination.read_bytes(), b"payload")
+
+    def test_custom_api_base_url_is_used_for_requests(self):
+        client = TelegramClient("token", api_base_url="http://127.0.0.1:8081")
+
+        with patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")) as urlopen:
+            with self.assertRaises(TelegramApiError):
+                client.get_me()
+
+        self.assertEqual(urlopen.call_args.args[0].full_url, "http://127.0.0.1:8081/bottoken/getMe")
+
     def test_timeout_is_wrapped_as_telegram_api_error(self):
         client = TelegramClient("token")
 

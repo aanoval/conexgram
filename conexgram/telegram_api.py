@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+import shutil
 import urllib.error
 import urllib.request
 import uuid
@@ -43,10 +44,18 @@ class TelegramApiError(RuntimeError):
 
 
 class TelegramClient:
-    def __init__(self, bot_token: str, timeout_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        bot_token: str,
+        timeout_seconds: int = 30,
+        api_base_url: str = "https://api.telegram.org",
+        local_bot_api: bool = False,
+    ) -> None:
         self.bot_token = bot_token
         self.timeout_seconds = timeout_seconds
-        self.base_url = f"https://api.telegram.org/bot{bot_token}"
+        self.api_base_url = api_base_url.rstrip("/")
+        self.local_bot_api = local_bot_api
+        self.base_url = f"{self.api_base_url}/bot{bot_token}"
 
     def get_updates(self, offset: Optional[int]) -> list[dict[str, Any]]:
         payload: dict[str, Any] = {
@@ -127,6 +136,17 @@ class TelegramClient:
         caption: Optional[str] = None,
         reply_to_message_id: Optional[int] = None,
     ) -> None:
+        if self.local_bot_api:
+            payload: dict[str, Any] = {
+                "chat_id": chat_id,
+                "document": file_path.expanduser().resolve().as_uri(),
+            }
+            if caption:
+                payload["caption"] = caption
+            if reply_to_message_id is not None:
+                payload["reply_parameters"] = {"message_id": reply_to_message_id}
+            self._request("sendDocument", payload, timeout=120)
+            return
         payload: dict[str, str] = {
             "chat_id": str(chat_id),
         }
@@ -256,7 +276,14 @@ class TelegramClient:
         file_path = file_info.get("file_path") if isinstance(file_info, dict) else None
         if not isinstance(file_path, str):
             raise TelegramApiError("Telegram getFile did not return file_path")
-        url = f"{self.base_url.replace('/bot', '/file/bot')}/{file_path}"
+        local_path = Path(file_path)
+        if self.local_bot_api and local_path.is_absolute():
+            if not local_path.exists() or not local_path.is_file():
+                raise TelegramApiError(f"Telegram local file path is unavailable: {local_path}")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_path, destination)
+            return destination
+        url = f"{self.api_base_url}/file/bot{self.bot_token}/{file_path}"
         with urllib.request.urlopen(url, timeout=120) as response:
             destination.write_bytes(response.read())
         return destination

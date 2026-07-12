@@ -210,6 +210,8 @@ class CommandHandler:
                 owner_user_id=user_id,
                 owner_chat_id=chat_id,
                 poll_timeout_seconds=telegram.poll_timeout_seconds,
+                api_base_url=telegram.api_base_url,
+                local_bot_api=telegram.local_bot_api,
             ),
         )
         save_config(self.config)
@@ -258,6 +260,8 @@ class CommandHandler:
             owner_user_id=owner_user_id,
             owner_chat_id=owner_chat_id,
             poll_timeout_seconds=telegram.poll_timeout_seconds,
+            api_base_url=telegram.api_base_url,
+            local_bot_api=telegram.local_bot_api,
         )
         self.config = replace(self.config, telegram=new_telegram)
         save_config(self.config)
@@ -1419,6 +1423,8 @@ class CommandHandler:
                 owner_user_id=owner_user_id,
                 owner_chat_id=owner_chat_id,
                 poll_timeout_seconds=self.config.telegram.poll_timeout_seconds,
+                api_base_url=self.config.telegram.api_base_url,
+                local_bot_api=self.config.telegram.local_bot_api,
             ),
         )
         save_config(self.config)
@@ -1649,6 +1655,8 @@ class CommandHandler:
             except Exception as exc:
                 checks.append(f"- Codex version check failed: {exc}")
         checks.append(f"- Config path: {self.config.config_path}")
+        checks.append(f"- Telegram API: {self.config.telegram.api_base_url}")
+        checks.append(f"- Telegram local mode: {self.config.telegram.local_bot_api}")
         checks.append(f"- State dir writable: {self.config.gateway.state_dir.exists()}")
         checks.append(f"- Default workspace exists: {self.config.codex.default_working_dir.exists()}")
         checks.append(f"- Allowlist configured: {bool(self.config.telegram.allowed_user_ids or self.config.telegram.allowed_chat_ids)}")
@@ -1673,6 +1681,8 @@ class CommandHandler:
             f"- Config path: {self.config.config_path}\n"
             f"- State dir: {self.config.gateway.state_dir}\n"
             f"- Session scope: {self.config.gateway.session_scope}\n"
+            f"- Telegram API: {self.config.telegram.api_base_url}\n"
+            f"- Telegram local mode: {self.config.telegram.local_bot_api}\n"
             f"- Codex binary: {self.config.codex.binary}\n"
             f"- Codex access: {access}\n"
             f"- Upload limit: {self._format_bytes(self.config.gateway.max_upload_bytes)}\n"

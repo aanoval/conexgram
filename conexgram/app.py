@@ -52,6 +52,8 @@ class GatewayApp:
         self.telegram = TelegramClient(
             config.telegram.bot_token,
             timeout_seconds=config.telegram.poll_timeout_seconds,
+            api_base_url=config.telegram.api_base_url,
+            local_bot_api=config.telegram.local_bot_api,
         )
         self.codex = CodexRunner(
             config.codex,

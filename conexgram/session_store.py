@@ -254,6 +254,10 @@ class SessionStore:
                 return None
             return self.sessions.get(session_id)
 
+    def get_session(self, session_id: str) -> Optional[Session]:
+        with self._lock:
+            return self.sessions.get(session_id)
+
     def set_active(self, scope_key: str, session_id: str) -> Session:
         with self._lock:
             if session_id not in self.sessions:

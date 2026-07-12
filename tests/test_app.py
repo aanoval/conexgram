@@ -219,6 +219,29 @@ class GatewayAppTests(unittest.TestCase):
             self.assertIn("Do not run other local audio transcription tools", queued.text)
             self.assertIn("No caption was provided.", queued.text)
 
+    def test_cancel_session_removes_queued_items_and_invalidates_generation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            session = app.commands.ensure_session(1, 2)
+            message = TelegramMessage(
+                update_id=1,
+                message_id=11,
+                chat_id=1,
+                user_id=2,
+                text="queued work",
+            )
+            app._enqueue_work(message, session.id)
+            app._enqueue_work(message, session.id)
+            first = app.queue.queue[0]
+            app.codex.stop_session = lambda session_id: False  # type: ignore[method-assign]
+
+            stopped, removed = app._cancel_session_work(session.id)
+
+            self.assertFalse(stopped)
+            self.assertEqual(removed, 2)
+            self.assertTrue(app.queue.empty())
+            self.assertFalse(app._work_is_current(first))
+
     def test_voice_upload_queues_transcript_as_codex_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = make_app(tmp)

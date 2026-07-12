@@ -27,6 +27,8 @@ LOG = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class WorkItem:
     message: TelegramMessage
+    session_id: str
+    generation: int
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,8 @@ class GatewayApp:
         self.progress = ProgressNotifier(self.telegram, config.progress)
         self.stt_transcriber = LocalSttTranscriber(config.stt)
         self.queue: queue.Queue[WorkItem] = queue.Queue()
+        self._queue_lock = threading.Lock()
+        self._session_generations: dict[str, int] = {}
         self.stop_event = threading.Event()
 
     def _notify_for_commands(self, chat_id: int, text: str) -> None:
@@ -170,9 +174,9 @@ class GatewayApp:
                 document_file_name=None,
                 media_type=None,
             )
-            self.queue.put(WorkItem(message=media_message))
+            session = self.commands.ensure_session(message.chat_id, message.user_id)
+            self._enqueue_work(media_message, session.id)
             if self.config.gateway.send_ack:
-                session = self.commands.ensure_session(message.chat_id, message.user_id)
                 self._send(
                     message.chat_id,
                     f"Queued media for Codex session {session.id[:8]}.",
@@ -183,8 +187,12 @@ class GatewayApp:
         command_response = self.commands.handle_command(message.text, message.chat_id, message.user_id)
         if command_response == "__STOP_CODEX__":
             session = self.commands.ensure_session(message.chat_id, message.user_id)
-            stopped = self.codex.stop_session(session.id)
-            self._send(message.chat_id, "Stop signal sent." if stopped else "No Codex process is running.", message.message_id)
+            stopped, removed = self._cancel_session_work(session.id)
+            if stopped or removed:
+                detail = f"Stopped Codex and cancelled {removed} queued item(s)."
+            else:
+                detail = "No Codex process or queued work is active for this session."
+            self._send(message.chat_id, detail, message.message_id)
             return
         if isinstance(command_response, FileCommandResponse):
             self._send_file(
@@ -196,7 +204,7 @@ class GatewayApp:
             return
         if isinstance(command_response, ProfileCommandResponse):
             for session_id in command_response.stop_session_ids:
-                self.codex.stop_session(session_id)
+                self._cancel_session_work(session_id)
             self._respond_command(message, command_response.text, command_response.reply_markup)
             return
         if isinstance(command_response, MessageCommandResponse):
@@ -214,28 +222,69 @@ class GatewayApp:
             )
             return
 
-        self.queue.put(WorkItem(message=message))
+        session = self.commands.ensure_session(message.chat_id, message.user_id)
+        self._enqueue_work(message, session.id)
         if self.config.gateway.send_ack:
-            session = self.commands.ensure_session(message.chat_id, message.user_id)
             self._send(
                 message.chat_id,
                 f"Queued for Codex session {session.id[:8]}.",
                 message.message_id,
             )
 
+    def _enqueue_work(self, message: TelegramMessage, session_id: str) -> None:
+        with self._queue_lock:
+            generation = self._session_generations.get(session_id, 0)
+            self.queue.put(
+                WorkItem(
+                    message=message,
+                    session_id=session_id,
+                    generation=generation,
+                )
+            )
+
+    def _work_is_current(self, item: WorkItem) -> bool:
+        with self._queue_lock:
+            return self._session_generations.get(item.session_id, 0) == item.generation
+
+    def _cancel_session_work(self, session_id: str) -> tuple[bool, int]:
+        with self._queue_lock:
+            self._session_generations[session_id] = (
+                self._session_generations.get(session_id, 0) + 1
+            )
+            removed = 0
+            with self.queue.mutex:
+                retained = []
+                while self.queue.queue:
+                    queued = self.queue.queue.popleft()
+                    if queued.session_id == session_id:
+                        removed += 1
+                    else:
+                        retained.append(queued)
+                self.queue.queue.extend(retained)
+                self.queue.unfinished_tasks = max(0, self.queue.unfinished_tasks - removed)
+                if self.queue.unfinished_tasks == 0:
+                    self.queue.all_tasks_done.notify_all()
+                self.queue.not_full.notify_all()
+        stopped = self.codex.stop_session(session_id)
+        return stopped, removed
+
     def _worker_loop(self) -> None:
         while not self.stop_event.is_set():
             item = self.queue.get()
             try:
-                self._process_codex_message(item.message)
+                if self._work_is_current(item):
+                    self._process_codex_message(item)
             except Exception:
                 LOG.exception("Failed to process Codex message")
                 self._send(item.message.chat_id, "Gateway error while processing this message.")
             finally:
                 self.queue.task_done()
 
-    def _process_codex_message(self, message: TelegramMessage) -> None:
-        session = self.commands.ensure_session(message.chat_id, message.user_id)
+    def _process_codex_message(self, item: WorkItem) -> None:
+        message = item.message
+        session = self.store.get_session(item.session_id)
+        if session is None or not self._work_is_current(item):
+            return
         progress_handle = self.progress.start(session, message.chat_id, message.message_id)
         try:
             profile_home = self.commands.active_profile_home(message.chat_id, message.user_id)
@@ -247,6 +296,9 @@ class GatewayApp:
             )
         finally:
             progress_handle.stop()
+
+        if not self._work_is_current(item):
+            return
 
         self.progress.complete(progress_handle, message.chat_id, success=result.return_code == 0)
 

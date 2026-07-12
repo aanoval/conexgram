@@ -27,6 +27,9 @@ class ConfigTests(unittest.TestCase):
                             "default_working_dir": str(root),
                             "workspace_roots": [str(root)],
                             "max_turn_seconds": 120,
+                            "startup_timeout_seconds": 30,
+                            "idle_timeout_seconds": 180,
+                            "workspace_preflight_timeout_seconds": 5,
                         },
                         "gateway": {
                             "state_dir": str(root / "state"),
@@ -57,6 +60,9 @@ class ConfigTests(unittest.TestCase):
             config = load_config(config_path)
 
             self.assertEqual(config.codex.max_turn_seconds, 120)
+            self.assertEqual(config.codex.startup_timeout_seconds, 30)
+            self.assertEqual(config.codex.idle_timeout_seconds, 180)
+            self.assertEqual(config.codex.workspace_preflight_timeout_seconds, 5)
             self.assertEqual(config.telegram.api_base_url, "http://127.0.0.1:8081")
             self.assertTrue(config.telegram.local_bot_api)
             self.assertEqual(config.gateway.worker_count, 2)
@@ -77,6 +83,9 @@ class ConfigTests(unittest.TestCase):
             saved = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["telegram"]["api_base_url"], "http://127.0.0.1:8081")
             self.assertTrue(saved["telegram"]["local_bot_api"])
+            self.assertEqual(saved["codex"]["startup_timeout_seconds"], 30)
+            self.assertEqual(saved["codex"]["idle_timeout_seconds"], 180)
+            self.assertEqual(saved["codex"]["workspace_preflight_timeout_seconds"], 5)
 
 
 if __name__ == "__main__":

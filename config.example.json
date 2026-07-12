@@ -19,6 +19,9 @@
     "full_access": false,
     "allow_runtime_full_access": false,
     "max_turn_seconds": 1800,
+    "startup_timeout_seconds": 90,
+    "idle_timeout_seconds": 900,
+    "workspace_preflight_timeout_seconds": 10,
     "skip_git_repo_check": true,
     "additional_writable_dirs": [
       "/path/to/extra/writable-dir"

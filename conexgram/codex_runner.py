@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .config import CodexConfig
-from .paths import ensure_dir
+from .paths import ensure_dir, workspace_access_error
 from .session_store import Session, now_iso
 
 LOG = logging.getLogger(__name__)
@@ -36,6 +36,8 @@ class _CodexAttempt:
     raw_lines: list[str]
     agent_messages: list[str]
     timed_out: bool = False
+    startup_timed_out: bool = False
+    idle_timed_out: bool = False
     model: Optional[str] = None
 
 
@@ -63,11 +65,32 @@ class CodexRunner:
         event_callback: Optional[Callable[[dict], None]] = None,
         prompt_mode: str = "telegram",
     ) -> CodexTurnResult:
-        working_dir = Path(session.working_dir).expanduser().resolve()
+        working_dir = Path(session.working_dir).expanduser()
         ensure_dir(self.logs_dir / session.id)
         stamp = now_iso().replace(":", "").replace("+", "Z")
         raw_log_path = self.logs_dir / session.id / f"turn-{stamp}.jsonl"
         final_message_path = self.logs_dir / session.id / f"turn-{stamp}.final.txt"
+        access_error = workspace_access_error(
+            working_dir,
+            timeout_seconds=self.config.workspace_preflight_timeout_seconds,
+        )
+        if access_error:
+            raw_log_path.write_text(
+                json.dumps({"type": "conexgram.workspace_error", "message": access_error}) + "\n",
+                encoding="utf-8",
+            )
+            return CodexTurnResult(
+                text=(
+                    f"Codex could not open this workspace. {access_error}\n\n"
+                    "Choose another workspace or grant the background runtime access to this folder."
+                ),
+                thread_id=session.codex_thread_id,
+                return_code=1,
+                raw_log_path=raw_log_path,
+                final_message_path=final_message_path,
+            )
+        working_dir = working_dir.resolve()
+        raw_log_path.unlink(missing_ok=True)
 
         prompt = self._build_prompt(session, user_text, prompt_mode=prompt_mode)
         command = self._build_command(session, final_message_path)
@@ -88,6 +111,7 @@ class CodexRunner:
             event_callback=event_callback,
             model=attempted_model,
             timeout_enabled=self._timeout_enabled(session),
+            raw_log_path=raw_log_path,
         )
         raw_lines = list(attempt.raw_lines)
         final_return_code = attempt.return_code
@@ -108,6 +132,9 @@ class CodexRunner:
                 "to_model": fallback_model,
             }
             raw_lines.append(json.dumps(fallback_event) + "\n")
+            with raw_log_path.open("a", encoding="utf-8") as raw_log:
+                raw_log.write(json.dumps(fallback_event) + "\n")
+                raw_log.flush()
             if final_message_path.exists():
                 final_message_path.unlink()
             fallback_command = self._build_command(
@@ -125,14 +152,13 @@ class CodexRunner:
                 event_callback=event_callback,
                 model=fallback_model,
                 timeout_enabled=self._timeout_enabled(session),
+                raw_log_path=raw_log_path,
             )
             raw_lines.extend(fallback_attempt.raw_lines)
             final_return_code = fallback_attempt.return_code
             thread_id = fallback_attempt.thread_id
             if fallback_attempt.return_code == 0:
                 session.model = fallback_model
-
-        raw_log_path.write_text("".join(raw_lines), encoding="utf-8")
 
         final_text = self._final_text(
             final_message_path=final_message_path,
@@ -161,6 +187,18 @@ class CodexRunner:
                 "and was stopped.\n\n"
                 + final_text
             )
+        watchdog_attempt = fallback_attempt if fallback_attempt is not None else attempt
+        if watchdog_attempt.startup_timed_out:
+            final_text = (
+                f"Codex produced no startup event within "
+                f"{self.config.startup_timeout_seconds} seconds and was stopped. "
+                "The workspace may be blocked or inaccessible to the background runtime."
+            )
+        elif watchdog_attempt.idle_timed_out:
+            final_text = (
+                f"Codex produced no progress event for "
+                f"{self.config.idle_timeout_seconds} seconds and was stopped."
+            )
 
         return CodexTurnResult(
             text=final_text,
@@ -181,6 +219,7 @@ class CodexRunner:
         event_callback: Optional[Callable[[dict], None]],
         model: Optional[str],
         timeout_enabled: bool = True,
+        raw_log_path: Optional[Path] = None,
     ) -> _CodexAttempt:
         popen_kwargs: dict[str, object] = {}
         if os.name == "posix":
@@ -206,41 +245,82 @@ class CodexRunner:
         raw_lines: list[str] = []
 
         timed_out = False
+        startup_timed_out = False
+        idle_timed_out = False
+        activity_lock = threading.Lock()
+        started = False
+        last_activity = time.monotonic()
+        monitor_stop = threading.Event()
 
         def terminate_on_timeout() -> None:
             nonlocal timed_out
             timed_out = True
             self._terminate_process_group(process)
 
+        def monitor_activity() -> None:
+            nonlocal startup_timed_out, idle_timed_out
+            while not monitor_stop.wait(1):
+                if process.poll() is not None:
+                    return
+                with activity_lock:
+                    has_started = started
+                    idle_for = time.monotonic() - last_activity
+                if not has_started and idle_for >= self.config.startup_timeout_seconds:
+                    startup_timed_out = True
+                    self._terminate_process_group(process)
+                    return
+                if timeout_enabled and has_started and idle_for >= self.config.idle_timeout_seconds:
+                    idle_timed_out = True
+                    self._terminate_process_group(process)
+                    return
+
         timer: Optional[threading.Timer] = None
         if timeout_enabled:
             timer = threading.Timer(self.config.max_turn_seconds, terminate_on_timeout)
             timer.start()
+        activity_monitor = threading.Thread(
+            target=monitor_activity,
+            name=f"codex-watchdog-{session_id[:8]}",
+            daemon=True,
+        )
+        activity_monitor.start()
         try:
             assert process.stdin is not None
             process.stdin.write(prompt)
             process.stdin.close()
             assert process.stdout is not None
-            for line in process.stdout:
-                raw_lines.append(line)
-                event = self._parse_event(line)
-                if event is None:
-                    continue
-                if event_callback is not None:
-                    try:
-                        event_callback(event)
-                    except Exception:
-                        LOG.exception("Codex event callback failed")
-                if event.get("type") == "thread.started":
-                    thread_id = str(event.get("thread_id") or thread_id or "")
-                item = event.get("item")
-                if event.get("type") == "item.completed" and isinstance(item, dict):
-                    if item.get("type") == "agent_message":
-                        text = item.get("text")
-                        if isinstance(text, str) and text.strip():
-                            agent_messages.append(text.strip())
+            log_context = (
+                raw_log_path.open("a", encoding="utf-8")
+                if raw_log_path is not None
+                else open(os.devnull, "w", encoding="utf-8")
+            )
+            with log_context as raw_log:
+                for line in process.stdout:
+                    raw_lines.append(line)
+                    raw_log.write(line)
+                    raw_log.flush()
+                    event = self._parse_event(line)
+                    if event is None:
+                        continue
+                    with activity_lock:
+                        started = True
+                        last_activity = time.monotonic()
+                    if event_callback is not None:
+                        try:
+                            event_callback(event)
+                        except Exception:
+                            LOG.exception("Codex event callback failed")
+                    if event.get("type") == "thread.started":
+                        thread_id = str(event.get("thread_id") or thread_id or "")
+                    item = event.get("item")
+                    if event.get("type") == "item.completed" and isinstance(item, dict):
+                        if item.get("type") == "agent_message":
+                            text = item.get("text")
+                            if isinstance(text, str) and text.strip():
+                                agent_messages.append(text.strip())
             return_code = process.wait()
         finally:
+            monitor_stop.set()
             if timer is not None:
                 timer.cancel()
             if process.stdout is not None:
@@ -255,6 +335,8 @@ class CodexRunner:
             raw_lines=raw_lines,
             agent_messages=agent_messages,
             timed_out=timed_out,
+            startup_timed_out=startup_timed_out,
+            idle_timed_out=idle_timed_out,
             model=model,
         )
 

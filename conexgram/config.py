@@ -35,6 +35,9 @@ class CodexConfig:
     full_access: bool = False
     allow_runtime_full_access: bool = False
     max_turn_seconds: int = 1800
+    startup_timeout_seconds: int = 90
+    idle_timeout_seconds: int = 900
+    workspace_preflight_timeout_seconds: int = 10
     skip_git_repo_check: bool = True
     additional_writable_dirs: list[Path] = field(default_factory=list)
     workspace_roots: list[Path] = field(default_factory=list)
@@ -123,6 +126,9 @@ def example_config_text() -> str:
             "full_access": False,
             "allow_runtime_full_access": False,
             "max_turn_seconds": 1800,
+            "startup_timeout_seconds": 90,
+            "idle_timeout_seconds": 900,
+            "workspace_preflight_timeout_seconds": 10,
             "skip_git_repo_check": True,
             "additional_writable_dirs": [],
             "workspace_roots": [str(Path.home() / "ConexgramWorkspace")],
@@ -212,6 +218,9 @@ def save_config(config: AppConfig) -> None:
             "full_access": config.codex.full_access,
             "allow_runtime_full_access": config.codex.allow_runtime_full_access,
             "max_turn_seconds": config.codex.max_turn_seconds,
+            "startup_timeout_seconds": config.codex.startup_timeout_seconds,
+            "idle_timeout_seconds": config.codex.idle_timeout_seconds,
+            "workspace_preflight_timeout_seconds": config.codex.workspace_preflight_timeout_seconds,
             "skip_git_repo_check": config.codex.skip_git_repo_check,
             "additional_writable_dirs": [str(item) for item in config.codex.additional_writable_dirs],
             "workspace_roots": [str(item) for item in config.codex.workspace_roots],
@@ -339,6 +348,13 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
             full_access=bool(codex_raw.get("full_access", False)),
             allow_runtime_full_access=bool(codex_raw.get("allow_runtime_full_access", False)),
             max_turn_seconds=max(60, int(codex_raw.get("max_turn_seconds", 1800))),
+            startup_timeout_seconds=max(
+                10, int(codex_raw.get("startup_timeout_seconds", 90))
+            ),
+            idle_timeout_seconds=max(60, int(codex_raw.get("idle_timeout_seconds", 900))),
+            workspace_preflight_timeout_seconds=max(
+                1, int(codex_raw.get("workspace_preflight_timeout_seconds", 10))
+            ),
             skip_git_repo_check=bool(codex_raw.get("skip_git_repo_check", True)),
             additional_writable_dirs=[
                 expand_path(item) for item in codex_raw.get("additional_writable_dirs", [])

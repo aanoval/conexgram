@@ -279,6 +279,72 @@ class CodexRunnerTests(unittest.TestCase):
             with self.assertRaises(ProcessLookupError):
                 os.kill(child_pid, 0)
 
+    def test_startup_watchdog_stops_process_without_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            script = work / "fake-codex"
+            script.write_text(
+                "#!/usr/bin/env python3\nimport time\ntime.sleep(60)\n",
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+            runner = CodexRunner(
+                CodexConfig(
+                    binary=str(script),
+                    default_working_dir=work,
+                    startup_timeout_seconds=1,
+                    idle_timeout_seconds=30,
+                ),
+                work / "logs",
+            )
+            session = Session(
+                id="startup-hang",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=str(work),
+            )
+
+            result = runner.run_turn(session, "hello")
+
+            self.assertNotEqual(result.return_code, 0)
+            self.assertIn("no startup event", result.text)
+
+    def test_idle_watchdog_stops_process_and_preserves_live_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            script = work / "fake-codex"
+            script.write_text(
+                "#!/usr/bin/env python3\n"
+                "import time\n"
+                "print('{\"type\":\"turn.started\"}', flush=True)\n"
+                "time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+            runner = CodexRunner(
+                CodexConfig(
+                    binary=str(script),
+                    default_working_dir=work,
+                    startup_timeout_seconds=5,
+                    idle_timeout_seconds=1,
+                ),
+                work / "logs",
+            )
+            session = Session(
+                id="idle-hang",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=str(work),
+            )
+
+            result = runner.run_turn(session, "hello")
+
+            self.assertNotEqual(result.return_code, 0)
+            self.assertIn("no progress event", result.text)
+            self.assertIn('"type":"turn.started"', result.raw_log_path.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

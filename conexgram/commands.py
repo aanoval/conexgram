@@ -23,6 +23,7 @@ from urllib.request import Request, urlopen
 from .codex_index import CodexIndex, CodexThread
 from .config import AppConfig
 from .config import TelegramConfig, save_config
+from .paths import workspace_access_error
 from .session_store import ConnectedUser, Session, SessionStore
 
 LOG = logging.getLogger(__name__)
@@ -464,6 +465,9 @@ class CommandHandler:
                 return f"Working directory not found: {working_dir}"
             if not self._path_allowed(working_dir):
                 return f"Working directory is outside configured workspace roots: {working_dir}"
+        access_error = self._workspace_access_error(working_dir)
+        if access_error:
+            return access_error
         scope_key = self.scope_key(chat_id, user_id)
         session = self.store.create(
             scope_key=scope_key,
@@ -803,6 +807,9 @@ class CommandHandler:
         session = self.store.find_for_scope(scope_key, args[0])
         if session is None:
             return "Session not found. Use /sessions to list available sessions."
+        access_error = self._workspace_access_error(Path(session.working_dir))
+        if access_error:
+            return access_error
         self.store.set_active(scope_key, session.id)
         return f"Switched to session {session.id}\nWorking directory: {session.working_dir}"
 
@@ -816,6 +823,9 @@ class CommandHandler:
             return f"Codex workspace folder no longer exists: {cwd}"
         if not self._path_allowed(cwd):
             return f"Codex workspace is outside configured workspace roots: {cwd}"
+        access_error = self._workspace_access_error(cwd)
+        if access_error:
+            return access_error
 
         scope_key = self.scope_key(chat_id, user_id)
         profile = self.active_profile(chat_id, user_id)
@@ -2210,12 +2220,24 @@ class CommandHandler:
         return requested
 
     def _set_workspace(self, chat_id: int, user_id: int, target: Path) -> str:
+        access_error = self._workspace_access_error(target)
+        if access_error:
+            return access_error
         session = self.ensure_session(chat_id, user_id)
         if session.codex_thread_id:
             return "This session already has a Codex thread. Use /new <path> to start fresh in another directory."
         session.working_dir = str(target)
         self.store.update(session)
         return f"Workspace updated: {session.working_dir}"
+
+    def _workspace_access_error(self, path: Path) -> Optional[str]:
+        error = workspace_access_error(
+            path,
+            timeout_seconds=self.config.codex.workspace_preflight_timeout_seconds,
+        )
+        if not error:
+            return None
+        return f"Cannot use this workspace. {error}"
 
     def _path_allowed(self, path: Path) -> bool:
         roots = list(self.config.codex.workspace_roots) or [self.config.codex.default_working_dir]

@@ -8,9 +8,9 @@ Recommended:
 
 ```bash
 pipx install conexgram
-conexgram setup
-conexgram doctor --fix
-conexgram install-service
+conexgram-gateway setup
+conexgram-gateway doctor --fix
+conexgram-gateway install-service
 ```
 
 If using pip directly:
@@ -30,6 +30,8 @@ Upgrade:
 
 ```bash
 pipx upgrade conexgram
+conexgram-gateway --version
+conexgram-gateway install-service
 ```
 
 Source install:
@@ -55,8 +57,8 @@ twine check dist/*
 5. Create a GitHub release tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 6. GitHub Actions publishes to PyPI through Trusted Publishing.

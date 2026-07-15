@@ -10,7 +10,7 @@
     "local_bot_api": false
   },
   "codex": {
-    "binary": "codex",
+    "binary": "conexgram",
     "default_working_dir": "~/ConexgramWorkspace",
     "model": "",
     "reasoning_effort": "",

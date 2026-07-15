@@ -1043,7 +1043,7 @@ class TerminalShell:
     def print_exit_summary(self) -> None:
         session = self._require_session()
         usage = self._session_token_usage(session)
-        resume_command = f"conexgram resume {session.id}"
+        resume_command = f"conexgram-gateway resume {session.id}"
         print()
         print(
             "Token usage: "
@@ -1306,7 +1306,7 @@ class TerminalShell:
         return (
             f"Active profile: {self._profile_label(profile)}\n"
             f"Profile home: {profile.home_dir}\n"
-            "Codex auth not found. Run `conexgram codex login --device-auth` "
+            "Codex auth not found. Run `conexgram-gateway codex login --device-auth` "
             "or use Telegram /codexlogin."
         )
 

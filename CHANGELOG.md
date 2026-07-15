@@ -4,6 +4,22 @@ All notable changes to Conexgram will be documented in this file.
 
 The format follows a simple versioned changelog, and this project uses semantic versioning before `1.0.0` with alpha releases for early public testing.
 
+## 0.2.0
+
+### Changed
+
+- Reserved the `conexgram` command for the Rust Conexgram Agent runtime
+- Renamed the Python gateway command to `conexgram-gateway`
+- Changed the default runtime binary from `codex` to `conexgram`
+- Added the `CONEXGRAM_RUNTIME_BIN` override for service deployments
+- Changed generated services to launch the gateway with its Python interpreter
+- Added runtime version validation to `conexgram-gateway doctor`
+
+### Migration
+
+- Upgrade the Python package before installing the Rust `conexgram` binary so pip can safely remove the legacy wrapper
+- Existing configs that explicitly set `codex.binary` to `codex` continue to work
+
 ## 0.1.1
 
 - Multi-profile Codex auth switching and profile management

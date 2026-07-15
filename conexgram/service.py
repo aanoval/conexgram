@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import os
 import platform
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from .config import DEFAULT_CONFIG_PATH
 from .paths import ensure_dir, expand_path
@@ -17,18 +20,21 @@ SERVICE_NAME = "conexgram.service"
 WINDOWS_TASK_NAME = "Conexgram"
 
 
-def install_service(config_path: Path = DEFAULT_CONFIG_PATH, start: bool = True) -> str:
+def install_service(
+    config_path: Path = DEFAULT_CONFIG_PATH,
+    start: bool = True,
+    runtime_binary: str = "conexgram",
+) -> str:
     system = platform.system()
-    executable = shutil.which("conexgram")
-    if executable is None:
-        raise RuntimeError("The `conexgram` command was not found in PATH. Install the package first.")
+    python_executable = sys.executable
+    resolved_runtime = shutil.which(runtime_binary) or runtime_binary
     config = str(expand_path(config_path))
     if system == "Darwin":
-        return _install_macos(executable, config, start)
+        return _install_macos(python_executable, config, resolved_runtime, start)
     if system == "Linux":
-        return _install_linux(executable, config, start)
+        return _install_linux(python_executable, config, resolved_runtime, start)
     if system == "Windows":
-        return _install_windows(executable, config, start)
+        return _install_windows(python_executable, config, resolved_runtime, start)
     raise RuntimeError(f"Unsupported operating system: {system}")
 
 
@@ -51,12 +57,21 @@ def uninstall_service() -> str:
     raise RuntimeError(f"Unsupported operating system: {system}")
 
 
-def _install_macos(executable: str, config: str, start: bool) -> str:
+def _install_macos(
+    python_executable: str,
+    config: str,
+    runtime_binary: str,
+    start: bool,
+) -> str:
     launch_agents = Path.home() / "Library" / "LaunchAgents"
     ensure_dir(launch_agents)
     plist = launch_agents / f"{SERVICE_LABEL}.plist"
     state_dir = Path.home() / ".conexgram"
     ensure_dir(state_dir)
+    escaped_python = escape(python_executable)
+    escaped_config = escape(config)
+    escaped_runtime = escape(runtime_binary)
+    escaped_state_dir = escape(str(state_dir))
     plist.write_text(
         f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -67,9 +82,13 @@ def _install_macos(executable: str, config: str, start: bool) -> str:
   <string>{SERVICE_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{executable}</string>
+    <string>{escaped_python}</string>
+    <string>-m</string>
+    <string>conexgram</string>
+    <string>--runtime-bin</string>
+    <string>{escaped_runtime}</string>
     <string>--config</string>
-    <string>{config}</string>
+    <string>{escaped_config}</string>
     <string>run</string>
   </array>
   <key>RunAtLoad</key>
@@ -77,9 +96,9 @@ def _install_macos(executable: str, config: str, start: bool) -> str:
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>{state_dir}/launchd.out.log</string>
+  <string>{escaped_state_dir}/launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>{state_dir}/launchd.err.log</string>
+  <string>{escaped_state_dir}/launchd.err.log</string>
 </dict>
 </plist>
 """,
@@ -93,7 +112,12 @@ def _install_macos(executable: str, config: str, start: bool) -> str:
     return f"Installed macOS LaunchAgent: {plist}"
 
 
-def _install_linux(executable: str, config: str, start: bool) -> str:
+def _install_linux(
+    python_executable: str,
+    config: str,
+    runtime_binary: str,
+    start: bool,
+) -> str:
     systemd_dir = Path.home() / ".config" / "systemd" / "user"
     ensure_dir(systemd_dir)
     service = systemd_dir / SERVICE_NAME
@@ -104,7 +128,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart={executable} --config {config} run
+ExecStart={shlex.quote(python_executable)} -m conexgram --runtime-bin {shlex.quote(runtime_binary)} --config {shlex.quote(config)} run
 Restart=always
 RestartSec=5
 
@@ -119,8 +143,16 @@ WantedBy=default.target
     return f"Installed Linux user service: {service}"
 
 
-def _install_windows(executable: str, config: str, start: bool) -> str:
-    command = f'"{executable}" --config "{config}" run'
+def _install_windows(
+    python_executable: str,
+    config: str,
+    runtime_binary: str,
+    start: bool,
+) -> str:
+    command = (
+        f'"{python_executable}" -m conexgram --runtime-bin "{runtime_binary}" '
+        f'--config "{config}" run'
+    )
     subprocess.run(
         ["schtasks", "/Create", "/SC", "ONLOGON", "/TN", WINDOWS_TASK_NAME, "/TR", command, "/F"],
         check=True,

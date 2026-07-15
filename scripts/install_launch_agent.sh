@@ -4,7 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PYTHON_BIN="$(command -v python3)"
-CONEXGRAM_BIN="$(command -v conexgram || true)"
 PLIST_PATH="$HOME/Library/LaunchAgents/com.conexgram.agent.plist"
 STATE_DIR="$HOME/.conexgram"
 
@@ -30,20 +29,14 @@ cat > "$PLIST_PATH" <<PLIST
   <array>
 PLIST
 
-if [ -n "$CONEXGRAM_BIN" ]; then
 cat >> "$PLIST_PATH" <<PLIST
-    <string>$CONEXGRAM_BIN</string>
+    <string>$PYTHON_BIN</string>
+    <string>-m</string>
+    <string>conexgram</string>
     <string>--config</string>
     <string>$STATE_DIR/config.json</string>
     <string>run</string>
 PLIST
-else
-cat >> "$PLIST_PATH" <<PLIST
-    <string>$PYTHON_BIN</string>
-    <string>$PROJECT_DIR/gateway.py</string>
-    <string>run</string>
-PLIST
-fi
 
 cat >> "$PLIST_PATH" <<PLIST
   </array>

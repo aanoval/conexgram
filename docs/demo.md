@@ -8,8 +8,8 @@ A strong launch demo should show Conexgram in under one minute.
 
 ```bash
 pipx install conexgram
-conexgram setup
-conexgram install-service
+conexgram-gateway setup
+conexgram-gateway install-service
 ```
 
 2. Open Telegram and send:

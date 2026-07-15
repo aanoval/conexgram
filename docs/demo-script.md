@@ -12,8 +12,8 @@ Run Codex CLI from Telegram
 
 ```bash
 pipx install conexgram
-conexgram setup
-conexgram install-service
+conexgram-gateway setup
+conexgram-gateway install-service
 ```
 
 2. Telegram:

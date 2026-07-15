@@ -1650,7 +1650,7 @@ class CommandHandler:
         checks = ["Doctor:"]
         checks.append(f"- Python: {sys.version.split()[0]}")
         codex_path = shutil.which(self.config.codex.binary)
-        checks.append(f"- Codex binary: {codex_path or 'not found'}")
+        checks.append(f"- Runtime binary: {codex_path or 'not found'}")
         if codex_path:
             try:
                 result = subprocess.run(
@@ -1661,9 +1661,9 @@ class CommandHandler:
                     timeout=10,
                 )
                 version_text = (result.stdout or result.stderr).strip() or "no version output"
-                checks.append(f"- Codex version: {version_text}")
+                checks.append(f"- Runtime version: {version_text}")
             except Exception as exc:
-                checks.append(f"- Codex version check failed: {exc}")
+                checks.append(f"- Runtime version check failed: {exc}")
         checks.append(f"- Config path: {self.config.config_path}")
         checks.append(f"- Telegram API: {self.config.telegram.api_base_url}")
         checks.append(f"- Telegram local mode: {self.config.telegram.local_bot_api}")
@@ -1681,7 +1681,7 @@ class CommandHandler:
             "Conexgram version:\n"
             f"- Conexgram: {package_version}\n"
             f"- Python: {sys.version.split()[0]}\n"
-            f"- Codex binary: {self.config.codex.binary}"
+            f"- Runtime binary: {self.config.codex.binary}"
         )
 
     def config_text(self) -> str:
@@ -1693,7 +1693,7 @@ class CommandHandler:
             f"- Session scope: {self.config.gateway.session_scope}\n"
             f"- Telegram API: {self.config.telegram.api_base_url}\n"
             f"- Telegram local mode: {self.config.telegram.local_bot_api}\n"
-            f"- Codex binary: {self.config.codex.binary}\n"
+            f"- Runtime binary: {self.config.codex.binary}\n"
             f"- Codex access: {access}\n"
             f"- Upload limit: {self._format_bytes(self.config.gateway.max_upload_bytes)}\n"
             f"- Default cwd: {self.config.codex.default_working_dir}"

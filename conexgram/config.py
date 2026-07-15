@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,7 @@ class TelegramConfig:
 
 @dataclass(frozen=True)
 class CodexConfig:
-    binary: str = "codex"
+    binary: str = "conexgram"
     default_working_dir: Path = Path.cwd()
     model: Optional[str] = None
     reasoning_effort: Optional[str] = None
@@ -117,7 +118,7 @@ def example_config_text() -> str:
             "local_bot_api": False,
         },
         "codex": {
-            "binary": "codex",
+            "binary": "conexgram",
             "default_working_dir": str(Path.home() / "ConexgramWorkspace"),
             "model": "",
             "reasoning_effort": "",
@@ -305,9 +306,13 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     if parsed_api_url.scheme not in {"http", "https"} or not parsed_api_url.netloc:
         raise ValueError("telegram.api_base_url must be an absolute HTTP(S) URL")
 
-    codex_binary = str(codex_raw.get("binary", "codex")).strip() or "codex"
+    configured_binary = str(codex_raw.get("binary", "conexgram")).strip() or "conexgram"
+    codex_binary = os.environ.get("CONEXGRAM_RUNTIME_BIN", "").strip() or configured_binary
     if shutil.which(codex_binary) is None:
-        raise ValueError(f"Codex binary not found in PATH: {codex_binary}")
+        raise ValueError(
+            f"Conexgram Agent runtime not found: {codex_binary}. "
+            "Install the runtime, set CONEXGRAM_RUNTIME_BIN, or update codex.binary."
+        )
 
     state_dir = expand_path(gateway_raw.get("state_dir", DEFAULT_STATE_DIR))
     working_dir = expand_path(codex_raw.get("default_working_dir", Path.cwd()))

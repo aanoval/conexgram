@@ -1,6 +1,6 @@
 # Troubleshooting
 
-## `conexgram` command not found
+## `conexgram-gateway` command not found
 
 Install with pipx:
 
@@ -19,7 +19,7 @@ python3 -m conexgram --help
 Run:
 
 ```bash
-conexgram setup --force
+conexgram-gateway setup --force
 ```
 
 Then paste a real BotFather token.
@@ -33,14 +33,14 @@ Send `/start` to your bot. If you are not authorized, Conexgram replies with:
 
 Add one of those IDs to `~/.conexgram/config.json`.
 
-## Codex binary not found
+## Conexgram Agent runtime not found
 
-Install and authenticate Codex CLI first, then run:
+Install and authenticate Conexgram Agent first, then run:
 
 ```bash
-codex --version
-codex exec --help
-conexgram doctor --fix
+conexgram --version
+conexgram exec --help
+conexgram-gateway doctor --fix
 ```
 
 ## The service starts but Telegram does not respond
@@ -64,7 +64,7 @@ journalctl --user -u conexgram.service -n 100
 GUI services may have a different `PATH` from your terminal. Prefer installing Conexgram with `pipx`, then run:
 
 ```bash
-conexgram install-service
+conexgram-gateway install-service
 ```
 
 ## Computer Access does not turn on

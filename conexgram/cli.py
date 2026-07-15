@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional
 
+from . import __version__
 from .app import GatewayApp, configure_logging
 from .config import DEFAULT_CONFIG_PATH, example_config_text, init_config, load_config
 from .onboarding import OnboardingError, run_first_run_onboarding
@@ -19,12 +22,18 @@ from .terminal_shell import TerminalShell
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run Codex CLI from Telegram or a Conexgram terminal shell."
+        description="Run Conexgram Agent from Telegram or a local gateway shell."
     )
+    parser.add_argument("--version", action="version", version=f"conexgram-gateway {__version__}")
     parser.add_argument(
         "--config",
         default=str(DEFAULT_CONFIG_PATH),
         help="Path to config JSON. Default: ~/.conexgram/config.json",
+    )
+    parser.add_argument(
+        "--runtime-bin",
+        default="",
+        help="Conexgram Agent executable. Overrides CONEXGRAM_RUNTIME_BIN and codex.binary.",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -65,6 +74,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error(f"unrecognized arguments: {' '.join(unknown_args)}")
     if args.command == "codex":
         args.codex_args = list(getattr(args, "codex_args", []) or []) + unknown_args
+    if args.runtime_bin:
+        os.environ["CONEXGRAM_RUNTIME_BIN"] = args.runtime_bin
     command = args.command or "shell"
     config_path = Path(args.config).expanduser()
 
@@ -119,7 +130,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             if command == "doctor":
                 print()
                 print("Fix:")
-                print(f"  python3 -m conexgram --config {config_path} setup --force")
+                print(f"  conexgram-gateway --config {config_path} setup --force")
                 print("  Then edit the generated config if needed and rerun doctor.")
             return 1
 
@@ -127,7 +138,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("Config OK")
         print(f"Config path: {config.config_path}")
         print(f"State dir: {config.gateway.state_dir}")
-        print(f"Codex binary: {config.codex.binary}")
+        print(f"Runtime binary: {config.codex.binary}")
+        try:
+            runtime_version = _runtime_version(config.codex.binary)
+        except RuntimeError as exc:
+            print(f"Runtime check failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"Runtime version: {runtime_version}")
         print(f"Default working dir: {config.codex.default_working_dir}")
         print(f"Full access: {config.codex.full_access}")
         print(f"Session scope: {config.gateway.session_scope}")
@@ -137,7 +154,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if command == "install-service":
         _doctor_fix_dirs(config_path)
         try:
-            message = install_service(config_path, start=not bool(getattr(args, "no_start", False)))
+            message = install_service(
+                config_path,
+                start=not bool(getattr(args, "no_start", False)),
+                runtime_binary=config.codex.binary,
+            )
         except Exception as exc:
             print(f"Service install error: {exc}", file=sys.stderr)
             return 1
@@ -187,6 +208,25 @@ def _doctor_fix_dirs(config_path: Path) -> None:
         ensure_dir(expand_path(default_working_dir))
     for item in codex.get("workspace_roots", []):
         ensure_dir(expand_path(item))
+
+
+def _runtime_version(binary: str) -> str:
+    try:
+        result = subprocess.run(
+            [binary, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"could not execute {binary}: {exc}") from exc
+    output = (result.stdout or result.stderr).strip()
+    if result.returncode != 0:
+        raise RuntimeError(output or f"{binary} --version exited with status {result.returncode}")
+    if not output:
+        raise RuntimeError(f"{binary} --version returned no output")
+    return output.splitlines()[0]
 
 
 def _is_first_run_config_error(exc: Exception) -> bool:

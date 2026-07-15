@@ -33,7 +33,7 @@ def run_first_run_onboarding(config_path: Path) -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise OnboardingError(
             "Onboarding needs an interactive terminal."
-            " Run `conexgram setup --force` and then `conexgram run`."
+            " Run `conexgram-gateway setup --force` and then `conexgram-gateway run`."
         )
 
     config_path = expand_path(config_path)

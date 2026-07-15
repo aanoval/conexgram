@@ -5,14 +5,14 @@
 [![Python](https://img.shields.io/pypi/pyversions/conexgram.svg)](https://pypi.org/project/conexgram/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Run Codex CLI from Telegram.
+Run Conexgram Agent from Telegram.
 
 Conexgram keeps coding sessions running on your own computer and lets you manage them from your phone.
 
 > Your code, credentials, and compute stay local.
 
 ```text
-Telegram -> Conexgram -> Codex CLI -> your local workspace -> Telegram
+Telegram -> Conexgram Gateway -> Conexgram Agent -> your local workspace -> Telegram
 ```
 
 ## Install in 3 minutes
@@ -27,9 +27,9 @@ Or with `pipx`:
 
 ```bash
 pipx install conexgram
-conexgram setup
-conexgram doctor --fix
-conexgram install-service
+conexgram-gateway setup
+conexgram-gateway doctor --fix
+conexgram-gateway install-service
 ```
 
 Direct `pip` install can be followed by auto-start in one command:
@@ -47,7 +47,7 @@ bash scripts/pip_install_and_service.sh
 Run in the foreground instead of installing a service:
 
 ```bash
-conexgram run
+conexgram-gateway run
 ```
 
 Then send `/start` or `/settings` to your Telegram bot.
@@ -67,7 +67,7 @@ Good fits:
 
 ## Features
 
-- Telegram bot -> Codex CLI bridge
+- Telegram bot -> Conexgram Agent bridge
 - Persistent Codex sessions per chat or per user
 - Session controls like `/new`, `/status`, `/sessions`, `/switch`, `/workspace`
 - Runtime controls like `/model`, `/reasoning`, `/mode`, `/preset`, `/fast`
@@ -84,8 +84,8 @@ Good fits:
 ```text
 Telegram message
   -> Telegram Bot API
-  -> Conexgram on your machine
-  -> Codex CLI
+  -> Conexgram Gateway on your machine
+  -> Conexgram Agent runtime
   -> final response
   -> Telegram reply
 ```
@@ -119,15 +119,15 @@ Read more in [docs/security.md](docs/security.md).
 ## Requirements
 
 - Python 3.9+
-- `codex` CLI installed and authenticated
+- Conexgram Agent runtime `0.144.4` or newer installed as `conexgram`
 - A Telegram bot token from BotFather
 - Your Telegram user id or allowed chat id
 
 Quick check:
 
 ```bash
-codex --version
-codex exec --help
+conexgram --version
+conexgram exec --help
 python3 --version
 ```
 
@@ -215,8 +215,8 @@ The installers register Conexgram to launch automatically at login and start it 
 If Conexgram was installed with `pipx`, you can also use:
 
 ```bash
-conexgram install-service
-conexgram uninstall-service
+conexgram-gateway install-service
+conexgram-gateway uninstall-service
 ```
 
 ## Example config
@@ -243,6 +243,10 @@ Key fields:
 - `progress.progress_messages`
 
 Troubleshooting: see `docs/troubleshooting.md`.
+
+`codex.binary` defaults to `conexgram`. Set `CONEXGRAM_RUNTIME_BIN` to an absolute
+runtime path when the service should not rely on `PATH`. Existing configurations
+that explicitly select `codex` remain supported.
 
 Generate a fresh config:
 
@@ -524,7 +528,21 @@ For local editable development:
 
 ```bash
 pip install -e .
-conexgram --help
+conexgram-gateway --help
+```
+
+## Upgrading from 0.1.x
+
+Version 0.2.0 reserves `conexgram` for the Rust Conexgram Agent runtime. Upgrade
+the Python package before installing the runtime binary so pip can remove the old
+gateway wrapper safely:
+
+```bash
+pipx upgrade conexgram
+conexgram-gateway --version
+conexgram-gateway install-service
+# Install the runtime only after the old wrapper has been removed.
+conexgram --version
 ```
 
 Release details: see `docs/pypi-release.md`.

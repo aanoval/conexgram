@@ -1,13 +1,42 @@
 import json
+import os
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from conexgram.config import load_config, save_config
+from conexgram.config import example_config_text, load_config, save_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_example_config_uses_conexgram_runtime(self):
+        example = json.loads(example_config_text())
+        self.assertEqual(example["codex"]["binary"], "conexgram")
+
+    def test_runtime_environment_override_takes_precedence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "telegram": {"bot_token": "123:abc", "allowed_user_ids": [1]},
+                        "codex": {
+                            "binary": "missing-configured-runtime",
+                            "default_working_dir": str(root),
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {"CONEXGRAM_RUNTIME_BIN": sys.executable}):
+                config = load_config(config_path)
+
+            self.assertEqual(config.codex.binary, sys.executable)
+
     def test_load_config_reads_runtime_limits(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

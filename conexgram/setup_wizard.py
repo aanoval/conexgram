@@ -56,7 +56,7 @@ def run_setup(path: Path = DEFAULT_CONFIG_PATH, force: bool = False) -> Path:
     path.chmod(0o600)
     print()
     print(f"Created config: {path}")
-    print("Next: run `conexgram doctor`, then start Conexgram.")
+    print("Next: run `conexgram-gateway doctor`, then start the gateway.")
     return path
 
 

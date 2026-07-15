@@ -7,7 +7,8 @@ FALLBACK_PACKAGE_SPEC="${CONEXGRAM_FALLBACK_PACKAGE:-git+https://github.com/aano
 PREFIX="${CONEXGRAM_HOME:-$HOME/.conexgram}"
 VENV_DIR="$PREFIX/venv"
 BIN_DIR="$HOME/.local/bin"
-BIN_PATH="$BIN_DIR/conexgram"
+BIN_PATH="$BIN_DIR/conexgram-gateway"
+LEGACY_BIN_PATH="$BIN_DIR/conexgram"
 CONFIG_PATH="$PREFIX/config.json"
 
 info() {
@@ -35,7 +36,10 @@ if ! "$VENV_DIR/bin/python" -m pip install --upgrade "$PACKAGE_SPEC"; then
   "$VENV_DIR/bin/python" -m pip install --upgrade "$FALLBACK_PACKAGE_SPEC"
 fi
 
-ln -sf "$VENV_DIR/bin/conexgram" "$BIN_PATH"
+ln -sf "$VENV_DIR/bin/conexgram-gateway" "$BIN_PATH"
+if [ -L "$LEGACY_BIN_PATH" ] && [ "$(readlink "$LEGACY_BIN_PATH")" = "$VENV_DIR/bin/conexgram" ]; then
+  rm "$LEGACY_BIN_PATH"
+fi
 export PATH="$BIN_DIR:$PATH"
 
 info "Installed: $("$BIN_PATH" --help | sed -n '1p')"
@@ -55,8 +59,8 @@ cat <<DONE
 Conexgram is installed.
 
 Try:
-  conexgram --config "$CONFIG_PATH" doctor --fix
-  conexgram --config "$CONFIG_PATH" run
+  conexgram-gateway --config "$CONFIG_PATH" doctor --fix
+  conexgram-gateway --config "$CONFIG_PATH" run
 
 If the command is not found in a new terminal, add this to your shell profile:
   export PATH="$BIN_DIR:\$PATH"

@@ -25,7 +25,7 @@ bash scripts/pip_install_and_service.sh
 
 1. Creates a private virtual environment under `~/.conexgram/venv`
 2. Installs Conexgram
-3. Creates a `~/.local/bin/conexgram` symlink
+3. Creates a `~/.local/bin/conexgram-gateway` symlink
 4. Runs the guided setup if config does not exist
 5. Runs `doctor --fix`
 6. Installs and starts the user auto-start service

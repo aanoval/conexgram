@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "conexgram"
-version = "0.1.2"
-description = "Run Codex CLI from Telegram"
+version = "0.2.0"
+description = "Run Conexgram Agent from Telegram"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -30,7 +30,7 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-conexgram = "conexgram.cli:main"
+conexgram-gateway = "conexgram.cli:main"
 
 [tool.setuptools]
 include-package-data = true

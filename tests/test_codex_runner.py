@@ -122,6 +122,24 @@ class CodexRunnerTests(unittest.TestCase):
             self.assertNotIn("CONEXGRAM_SEND_FILE:", prompt)
             self.assertNotIn("Telegram-controlled", prompt)
 
+    def test_chatgpt_ipc_prompt_contains_only_the_original_user_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = CodexRunner(CodexConfig(binary="codex", default_working_dir=Path(tmp)), Path(tmp) / "logs")
+            session = Session(
+                id="s1",
+                scope_key="chat:1",
+                chat_id=1,
+                user_id=2,
+                working_dir=tmp,
+                codex_thread_id="thread-1",
+            )
+
+            prompt = runner._build_prompt(session, "Isi pesan", prompt_mode="chatgpt-ipc")
+
+            self.assertEqual(prompt, "Isi pesan\n")
+            self.assertNotIn("Conexgram gateway tool protocol", prompt)
+            self.assertNotIn("User message:", prompt)
+
     def test_run_turn_emits_json_events_to_callback(self):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)

@@ -30,6 +30,7 @@ class CodexTurnResult:
     return_code: int
     raw_log_path: Path
     final_message_path: Path
+    source: str = "codex-exec"
 
 
 @dataclass
@@ -98,11 +99,11 @@ class CodexRunner:
 
         prompt = self._build_prompt(session, user_text, prompt_mode=prompt_mode)
         profile_home = profile_home or Path.home()
-        if self._should_use_chatgpt_ipc(session, profile_home):
+        if prompt_mode == "telegram" and self._should_use_chatgpt_ipc(session, profile_home):
             try:
                 return self._run_chatgpt_ipc_turn(
                     session=session,
-                    prompt=prompt,
+                    prompt=self._build_prompt(session, user_text, prompt_mode="chatgpt-ipc"),
                     profile_home=profile_home,
                     event_callback=event_callback,
                     raw_log_path=raw_log_path,
@@ -341,6 +342,7 @@ class CodexRunner:
                         return_code=0,
                         raw_log_path=raw_log_path,
                         final_message_path=final_message_path,
+                        source="chatgpt-ipc",
                     )
 
                 elapsed = time.monotonic() - started_at
@@ -357,6 +359,7 @@ class CodexRunner:
                         return_code=1,
                         raw_log_path=raw_log_path,
                         final_message_path=final_message_path,
+                        source="chatgpt-ipc",
                     )
                 if not saw_new_output and elapsed >= self.config.startup_timeout_seconds:
                     self._interrupt_ipc_turn(session.id, client, turn)
@@ -371,6 +374,7 @@ class CodexRunner:
                         return_code=1,
                         raw_log_path=raw_log_path,
                         final_message_path=final_message_path,
+                        source="chatgpt-ipc",
                     )
                 if saw_new_output and self._timeout_enabled(session):
                     idle_for = time.monotonic() - last_activity
@@ -387,6 +391,7 @@ class CodexRunner:
                             return_code=1,
                             raw_log_path=raw_log_path,
                             final_message_path=final_message_path,
+                            source="chatgpt-ipc",
                         )
                 time.sleep(0.35)
         finally:
@@ -927,6 +932,8 @@ class CodexRunner:
         return env
 
     def _build_prompt(self, session: Session, user_text: str, prompt_mode: str = "telegram") -> str:
+        if prompt_mode == "chatgpt-ipc":
+            return user_text.strip() + "\n"
         if prompt_mode == "terminal":
             return self._terminal_prompt(user_text)
 

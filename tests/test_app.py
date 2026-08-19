@@ -38,6 +38,7 @@ class FakeTelegram:
         self.edited: list[tuple[int, int, str, Optional[dict]]] = []
         self.commands: list[dict[str, str]] = []
         self.menu_synced = False
+        self.documents: list[tuple[int, Path, Optional[str], Optional[int]]] = []
 
     def send_message(
         self,
@@ -63,6 +64,16 @@ class FakeTelegram:
 
     def set_chat_menu_button(self) -> None:
         self.menu_synced = True
+
+    def send_document(
+        self,
+        chat_id: int,
+        file_path: Path,
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+    ) -> int:
+        self.documents.append((chat_id, file_path, caption, reply_to_message_id))
+        return len(self.documents)
 
 
 class GatewayAppTests(unittest.TestCase):
@@ -384,6 +395,44 @@ class GatewayAppTests(unittest.TestCase):
             updated = app.store.get_session(session.id)
             assert updated is not None
             self.assertEqual(updated.last_live_message_ids, [88])
+
+    def test_chatgpt_final_local_link_is_sent_as_file_and_path_is_kept_in_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "artifact.txt"
+            path.write_text("artifact", encoding="utf-8")
+            app = make_app(tmp)
+            fake = FakeTelegram()
+            app.telegram = fake  # type: ignore[assignment]
+            session = app.commands.ensure_session(1, 2)
+
+            class CaptureProgress:
+                def start(self, session, chat_id, reply_to_message_id, **kwargs):
+                    return ProgressHandle(threading.Event())
+
+                def complete(self, handle, chat_id, final_text, success=True):
+                    return [99]
+
+            app.progress = CaptureProgress()  # type: ignore[assignment]
+            app.codex.run_turn = lambda session, user_text, profile_home=None, event_callback=None: CodexTurnResult(  # type: ignore[method-assign]
+                text=f"Done\n\n[artifact](<{path}>)",
+                thread_id=session.codex_thread_id,
+                return_code=0,
+                raw_log_path=root / "raw.jsonl",
+                final_message_path=root / "final.txt",
+                source="chatgpt-ipc",
+            )
+
+            app._process_codex_message(
+                WorkItem(TelegramMessage(1, 10, 1, 2, "make artifact"), session.id, 0)
+            )
+
+            updated = app.store.get_session(session.id)
+            assert updated is not None
+            self.assertIn(str(path), updated.last_sent_response_text)
+            self.assertEqual(len(fake.documents), 1)
+            self.assertEqual(fake.documents[0][1], path.resolve())
+            self.assertIn(str(path.resolve()), fake.documents[0][2] or "")
 
     def test_cleanup_uploads_deletes_expired_files_only(self):
         with tempfile.TemporaryDirectory() as tmp:

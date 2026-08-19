@@ -15,6 +15,7 @@ from pathlib import Path
 from .codex_runner import CodexRunner
 from .codex_transcript import CodexTranscriptReader
 from .chatgpt_ipc import ChatGPTIPCError
+from .chatgpt_attachments import extract_local_files
 from .commands import (
     CommandHandler,
     FileCommandResponse,
@@ -395,7 +396,29 @@ class GatewayApp:
             session.title = self._title_from_text(message.text)
         self.store.update(session)
 
-        response_text, attachment_directives = self._extract_attachment_directives(result.text)
+        chatgpt_attachments: list[FileCommandResponse] = []
+        chatgpt_attachment_errors: list[str] = []
+        if result.source == "chatgpt-ipc":
+            response_text = result.text.strip()
+            attachment_directives = [
+                AttachmentDirective(item.path_text, item.display_name)
+                for item in extract_local_files(response_text)
+            ]
+            path_lines: list[str] = []
+            for directive in attachment_directives:
+                attachment = self._prepare_attachment(directive, session)
+                if isinstance(attachment, str):
+                    chatgpt_attachment_errors.append(attachment)
+                    continue
+                caption = self._chatgpt_attachment_caption(attachment, directive.caption)
+                chatgpt_attachments.append(
+                    FileCommandResponse(path=attachment.path, caption=caption)
+                )
+                path_lines.append(f"📎 Local file path: {attachment.path}")
+            if path_lines:
+                response_text = response_text + "\n\n" + "\n".join(path_lines)
+        else:
+            response_text, attachment_directives = self._extract_attachment_directives(result.text)
 
         prefix = ""
         if result.return_code != 0:
@@ -419,17 +442,28 @@ class GatewayApp:
             self._live_handles.pop(session.id, None)
             self._pending_ipc_requests.pop(session.id, None)
 
-        for directive in attachment_directives:
-            attachment = self._prepare_attachment(directive, session)
-            if isinstance(attachment, str):
-                self._send(message.chat_id, attachment, message.message_id)
-                continue
-            self._send_file(
-                message.chat_id,
-                attachment.path,
-                attachment.caption,
-                reply_to_message_id=message.message_id,
-            )
+        if result.source == "chatgpt-ipc":
+            for error in chatgpt_attachment_errors:
+                self._send(message.chat_id, error, message.message_id)
+            for attachment in chatgpt_attachments:
+                self._send_file(
+                    message.chat_id,
+                    attachment.path,
+                    attachment.caption,
+                    reply_to_message_id=message.message_id,
+                )
+        else:
+            for directive in attachment_directives:
+                attachment = self._prepare_attachment(directive, session)
+                if isinstance(attachment, str):
+                    self._send(message.chat_id, attachment, message.message_id)
+                    continue
+                self._send_file(
+                    message.chat_id,
+                    attachment.path,
+                    attachment.caption,
+                    reply_to_message_id=message.message_id,
+                )
 
     def _attach_switched_thread(
         self,
@@ -813,6 +847,15 @@ class GatewayApp:
         if caption and len(caption) > 1024:
             caption = caption[:1021] + "..."
         return FileCommandResponse(path=requested, caption=caption)
+
+    @staticmethod
+    def _chatgpt_attachment_caption(
+        attachment: FileCommandResponse,
+        display_name: Optional[str],
+    ) -> str:
+        label = display_name or attachment.path.name
+        caption = f"{label}\nPath: {attachment.path}"
+        return caption[:1021] + "..." if len(caption) > 1024 else caption
 
     @staticmethod
     def _title_from_text(text: str) -> str:

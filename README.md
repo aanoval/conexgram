@@ -5,14 +5,21 @@
 [![Python](https://img.shields.io/pypi/pyversions/conexgram.svg)](https://pypi.org/project/conexgram/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Run Conexgram Agent from Telegram.
+Remote-control both Codex CLI and the ChatGPT/Codex Desktop app from Telegram.
 
-Conexgram keeps coding sessions running on your own computer and lets you manage them from your phone.
+Conexgram keeps coding sessions running on your own computer and lets you start,
+resume, monitor, and steer them from your phone. It supports the normal local
+`codex exec` runner as well as existing threads owned by the ChatGPT/Codex
+Desktop app.
 
 > Your code, credentials, and compute stay local.
 
 ```text
-Telegram -> Conexgram Gateway -> Conexgram Agent -> your local workspace -> Telegram
+Telegram
+  -> Conexgram Gateway on your Mac
+     -> Codex CLI runner (`codex exec`)
+     -> ChatGPT/Codex Desktop app through its local IPC app-server
+  -> your local workspace -> Telegram
 ```
 
 ## Install in 3 minutes
@@ -56,25 +63,36 @@ If the bot says you are unauthorized, it will show your Telegram user ID and cha
 
 ## Why Conexgram?
 
-Conexgram is useful when you want Codex to stay attached to your real local workspace while Telegram becomes the remote control surface. It is a good fit when you want to inspect a codebase, continue a session, check progress, or run supervised automation without opening your laptop.
+Conexgram is useful when you want Codex to stay attached to your real local
+workspace while Telegram becomes the remote control surface. It can either
+run a normal Codex CLI turn or continue a thread that is already owned by the
+ChatGPT/Codex Desktop app, without modifying the app or connecting to an
+external app-server.
 
 Good fits:
 
 - personal remote coding assistant for your workstation
 - lightweight DevOps helper for trusted private machines
 - Telegram-controlled Codex sessions for long-running work
+- Remote ChatGPT/Codex Desktop threads through the app's local IPC route
+- Realtime app-owned output, typing indicators, and active-turn steer mode
+- Telegram relay for app approvals, user input, and MCP elicitation events
+- Original Telegram prompts shown cleanly in the ChatGPT/Codex Desktop UI
 - local-first bridge for future multi-agent workflows
 
 ## Features
 
 - Telegram bot -> Conexgram Agent bridge
 - Persistent Codex sessions per chat or per user
+- Remote ChatGPT/Codex Desktop threads through the app's local IPC app-server
 - Session controls like `/new`, `/status`, `/sessions`, `/switch`, `/workspace`
 - Runtime controls like `/model`, `/reasoning`, `/mode`, `/preset`, `/fast`
 - Live Codex output controls like `/typing`, `/progress`, `/silent`, `/tail`
+- Realtime Desktop output with active-turn steer mode and typing indicators
+- Telegram relay for app approvals, user input, and MCP elicitation events
 - Telegram file upload into the active workspace
 - Optional Telegram voice/audio transcription before forwarding to Codex
-- Optional local file send-back with `/sendfile`
+- Optional local file send-back with `/sendfile` or an explicit file request
 - Works in the foreground or as an auto-start service on macOS, Linux, or Windows
 - No third-party Python dependencies
 - Small modular Python internals with room for future agent routing
@@ -85,25 +103,41 @@ Good fits:
 Telegram message
   -> Telegram Bot API
   -> Conexgram Gateway on your machine
-  -> Conexgram Agent runtime
-  -> final response
+  -> selected session transport
+     -> Codex CLI (`codex exec`), or
+     -> ChatGPT/Codex Desktop local IPC app-server
+  -> streamed/final response
   -> Telegram reply
 ```
 
+There are two session transports:
+
+| Transport | Thread owner | Follow-up behavior |
+| --- | --- | --- |
+| Codex CLI | Local `codex exec` process | Messages use the existing gateway queue |
+| ChatGPT/Codex Desktop | ChatGPT/Codex Desktop app-server | Output is followed in realtime and a new Telegram prompt can steer an active turn |
+
+The Desktop transport is a local remote-client path: the ChatGPT/Codex
+Desktop app remains the owner of the thread, tools, permissions, and app state.
+Conexgram only relays Telegram input and the resulting events back to Telegram.
+
 ## What you can do from Telegram
 
-- Start and resume Codex sessions
+- Start and resume Codex CLI sessions
+- Select and continue existing ChatGPT/Codex Desktop threads
 - Switch between safe, work, fast, power, and Computer Access presets
 - Change model and reasoning effort per session
 - Upload files into the active workspace
-- Send local files back to Telegram
+- Send local files back to Telegram only when explicitly requested
 - Watch long-running tasks with typing and progress indicators
+- Steer an active ChatGPT/Codex Desktop turn without waiting for it to finish
 - Stop a running Codex turn from your phone
 
 Conexgram keeps two layers of state:
 
 - **Gateway session**: local session record managed by Conexgram
-- **Codex thread**: actual Codex CLI thread id used for resume/continuation
+- **Codex thread**: the actual CLI or ChatGPT/Codex Desktop thread id used for resume/continuation
+- **Thread transport**: whether the session is handled by `codex exec` or the local Desktop IPC bridge
 
 ## Security model
 
@@ -122,6 +156,10 @@ Read more in [docs/security.md](docs/security.md).
 - Conexgram Agent runtime `0.144.4` or newer installed as `conexgram`
 - A Telegram bot token from BotFather
 - Your Telegram user id or allowed chat id
+
+The normal CLI transport only requires the Codex runtime. To use the remote
+ChatGPT/Codex Desktop transport, keep the Desktop app installed, signed in, and
+running on the same Mac. The selected thread must be owned by that local app.
 
 Quick check:
 
@@ -257,14 +295,19 @@ Generate a fresh config:
 python3 -m conexgram example-config
 ```
 
-### ChatGPT Desktop thread bridge
+### Remote ChatGPT/Codex Desktop mode
 
-When enabled, an existing local thread is routed through ChatGPT Desktop's
-user-owned local IPC router. Conexgram follows the Desktop owner for realtime
-state, forwards Telegram prompts and approval/input replies, and leaves the
-Desktop app-server as the thread owner. If the socket is unavailable or the
-Desktop app does not own the thread, Conexgram falls back to its normal Codex
-CLI runner without duplicating a request that was already accepted by Desktop.
+When `codex.chatgpt_ipc_enabled` is enabled, an existing local thread is
+routed through the ChatGPT/Codex Desktop app's user-owned local IPC router.
+Conexgram follows the Desktop owner for realtime state, forwards Telegram
+prompts and approval/input replies, and leaves the Desktop app-server as the
+thread owner. If the socket is unavailable or the Desktop app does not own the
+thread, Conexgram falls back to its normal Codex CLI runner without duplicating
+a request that was already accepted by Desktop.
+
+This path uses the same local app-server route used by the installed Desktop
+app. It does not patch, automate, or replace the ChatGPT/Codex Desktop app, and
+it does not send the thread through a separate external gateway.
 
 ChatGPT-owned turns receive the original user text only, so the Telegram
 gateway protocol is not displayed as a user message in the Desktop UI. Local
@@ -283,6 +326,8 @@ Desktop. CLI turns retain the existing queue behavior.
 
 The IPC protocol is private to the installed ChatGPT Desktop build, so this
 bridge is deliberately optional and should be retested after Desktop updates.
+The exact IPC socket defaults to `~/.codex/ipc/ipc.sock` and can be overridden
+with `codex.chatgpt_ipc_socket`.
 
 ## Commands
 
@@ -541,6 +586,8 @@ Key modules:
 - `conexgram/app.py` — gateway loop and Telegram update processing
 - `conexgram/commands.py` — Telegram slash commands
 - `conexgram/codex_runner.py` — Codex CLI execution and JSON event parsing
+- `conexgram/chatgpt_ipc.py` — local ChatGPT/Codex Desktop IPC client and event following
+- `conexgram/chatgpt_attachments.py` — on-demand local-file detection and Telegram delivery
 - `conexgram/progress.py` — typing indicator and long-running progress messages
 - `conexgram/session_store.py` — local session persistence
 - `conexgram/agents.py` — future multi-agent profile primitives
@@ -579,4 +626,6 @@ Curl installer details: see `docs/curl-install.md`.
 
 ## Project status
 
-Conexgram is intentionally small and focused. The goal is a clean, understandable bridge for remote Codex usage over Telegram — not a full remote agent platform.
+Conexgram is a local-first remote Codex platform over Telegram: it can operate
+the Codex CLI directly or act as a remote client for ChatGPT/Codex Desktop
+threads while leaving the local app-server and workspace in control.

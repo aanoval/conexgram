@@ -7,13 +7,45 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from conexgram.config import example_config_text, load_config, save_config
+from conexgram.config import (
+    DEFAULT_CODEX_MODEL,
+    DEFAULT_REASONING_EFFORT,
+    example_config_text,
+    load_config,
+    save_config,
+)
 
 
 class ConfigTests(unittest.TestCase):
     def test_example_config_uses_conexgram_runtime(self):
         example = json.loads(example_config_text())
         self.assertEqual(example["codex"]["binary"], "conexgram")
+        self.assertEqual(example["codex"]["model"], DEFAULT_CODEX_MODEL)
+        self.assertEqual(example["codex"]["reasoning_effort"], DEFAULT_REASONING_EFFORT)
+
+    def test_codex_defaults_are_used_when_legacy_config_is_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "telegram": {"bot_token": "123:abc", "allowed_user_ids": [1]},
+                        "codex": {
+                            "binary": sys.executable,
+                            "default_working_dir": str(root),
+                            "model": "",
+                            "reasoning_effort": "",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+            self.assertEqual(config.codex.model, DEFAULT_CODEX_MODEL)
+            self.assertEqual(config.codex.reasoning_effort, DEFAULT_REASONING_EFFORT)
 
     def test_runtime_environment_override_takes_precedence(self):
         with tempfile.TemporaryDirectory() as tmp:

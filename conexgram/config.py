@@ -12,6 +12,9 @@ from urllib.parse import urlparse
 
 from .paths import DEFAULT_CONFIG_PATH, DEFAULT_STATE_DIR, ensure_dir, expand_path
 
+DEFAULT_CODEX_MODEL = "gpt-5.6-luna"
+DEFAULT_REASONING_EFFORT = "xhigh"
+
 
 @dataclass(frozen=True)
 class TelegramConfig:
@@ -34,8 +37,8 @@ class CodexConfig:
     chatgpt_host_id: str = "local"
     chatgpt_ipc_client_type: str = "CONEXGRAM"
     chatgpt_ipc_timeout_seconds: int = 20
-    model: Optional[str] = None
-    reasoning_effort: Optional[str] = None
+    model: Optional[str] = DEFAULT_CODEX_MODEL
+    reasoning_effort: Optional[str] = DEFAULT_REASONING_EFFORT
     mode: str = "safe"
     fast_mode: bool = False
     full_access: bool = False
@@ -123,8 +126,8 @@ def example_config_text() -> str:
             "chatgpt_host_id": "local",
             "chatgpt_ipc_client_type": "CONEXGRAM",
             "chatgpt_ipc_timeout_seconds": 20,
-            "model": "",
-            "reasoning_effort": "",
+            "model": DEFAULT_CODEX_MODEL,
+            "reasoning_effort": DEFAULT_REASONING_EFFORT,
             "mode": "safe",
             "fast_mode": False,
             "full_access": False,
@@ -137,7 +140,7 @@ def example_config_text() -> str:
             "additional_writable_dirs": [],
             "workspace_roots": [str(Path.home() / "ConexgramWorkspace")],
             "model_presets": {
-                "default": "",
+                "default": DEFAULT_CODEX_MODEL,
                 "fast": "gpt-5.3-codex-spark",
                 "power": "gpt-5.2",
             },
@@ -326,8 +329,11 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     if session_scope not in {"chat", "user"}:
         raise ValueError("gateway.session_scope must be 'chat' or 'user'")
 
-    model = str(codex_raw.get("model", "")).strip() or None
-    reasoning_effort = str(codex_raw.get("reasoning_effort", "")).strip().lower() or None
+    model = str(codex_raw.get("model", DEFAULT_CODEX_MODEL)).strip() or DEFAULT_CODEX_MODEL
+    reasoning_effort = (
+        str(codex_raw.get("reasoning_effort", DEFAULT_REASONING_EFFORT)).strip().lower()
+        or DEFAULT_REASONING_EFFORT
+    )
     if reasoning_effort is not None and reasoning_effort not in {"low", "medium", "high", "xhigh"}:
         raise ValueError("codex.reasoning_effort must be empty, low, medium, high, or xhigh")
 

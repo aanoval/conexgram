@@ -26,8 +26,8 @@ def run_setup(path: Path = DEFAULT_CONFIG_PATH, force: bool = False) -> Path:
     parsed_user_ids, parsed_chat_ids = _ask_allowlist()
     workspace = _ask("Main workspace folder", str(Path.home() / "ConexgramWorkspace"))
     mode = _choice("Access mode", ["safe", "workspace", "computer"], "workspace")
-    model = _ask("Default Codex model, empty for Codex default", "")
-    reasoning = _ask("Default reasoning effort, empty for Codex default", "")
+    model = _ask("Default Codex model", base["codex"]["model"])
+    reasoning = _ask("Default reasoning effort", base["codex"]["reasoning_effort"])
     typing = _yes_no("Show Telegram typing indicator while Codex runs", True)
     progress = _yes_no("Show live Codex response while it is processing", True)
     runtime_computer = False

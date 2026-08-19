@@ -21,8 +21,13 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .codex_index import CodexIndex, CodexThread
-from .config import AppConfig
-from .config import TelegramConfig, save_config
+from .config import (
+    DEFAULT_CODEX_MODEL,
+    DEFAULT_REASONING_EFFORT,
+    AppConfig,
+    TelegramConfig,
+    save_config,
+)
 from .paths import workspace_access_error
 from .session_store import ConnectedUser, Session, SessionStore
 
@@ -288,12 +293,21 @@ class CommandHandler:
         session = self.store.get_active(scope_key)
         if session is not None:
             profile = self.active_profile(chat_id, user_id)
+            changed = False
             if session.profile_id != profile.id:
                 session.profile_id = profile.id
-                self.store.update(session)
+                changed = True
+            if session.model is None and self.config.codex.model:
+                session.model = self.config.codex.model
+                changed = True
+            if session.reasoning_effort is None and self.config.codex.reasoning_effort:
+                session.reasoning_effort = self.config.codex.reasoning_effort
+                changed = True
             resolved_model = self._resolve_model_alias(session.model)
             if resolved_model != session.model:
                 session.model = resolved_model
+                changed = True
+            if changed:
                 self.store.update(session)
             return session
         return self.store.create(
@@ -849,8 +863,10 @@ class CommandHandler:
             if session.codex_thread_id == thread.id and session.profile_id == profile.id:
                 session.working_dir = str(cwd)
                 session.title = self._thread_title(thread)
-                session.model = thread.model or session.model
-                session.reasoning_effort = thread.reasoning_effort or session.reasoning_effort
+                if session.model is None:
+                    session.model = self.config.codex.model
+                if session.reasoning_effort is None:
+                    session.reasoning_effort = self.config.codex.reasoning_effort
                 self.store.update(session)
                 self.store.set_active(scope_key, session.id)
                 return SwitchCommandResponse(
@@ -866,8 +882,8 @@ class CommandHandler:
             chat_id=chat_id,
             user_id=user_id,
             working_dir=cwd,
-            model=thread.model or self.config.codex.model,
-            reasoning_effort=thread.reasoning_effort or self.config.codex.reasoning_effort,
+            model=self.config.codex.model,
+            reasoning_effort=self.config.codex.reasoning_effort,
             mode=self.config.codex.mode,
             fast_mode=self.config.codex.fast_mode,
             title=self._thread_title(thread),
@@ -940,25 +956,29 @@ class CommandHandler:
             return self.models(chat_id, user_id, [])
         raw_model = args[0].strip()
         if raw_model.lower() in {"default", "none", ""}:
-            session.model = None
+            session.model = self.config.codex.model or DEFAULT_CODEX_MODEL
         else:
             model = self._resolve_model_alias(raw_model) or raw_model
             session.model = model
         allowed_reasoning = self._reasoning_levels_for_model(chat_id, user_id, session.model)
         if session.reasoning_effort and session.reasoning_effort not in allowed_reasoning:
-            session.reasoning_effort = None
+            session.reasoning_effort = (
+                self.config.codex.reasoning_effort
+                if self.config.codex.reasoning_effort in allowed_reasoning
+                else None
+            )
         self.store.update(session)
         return self._reasoning_menu(
             chat_id,
             user_id,
-            prefix=f"Model for this session: {session.model or 'Codex default'}",
+            prefix=f"Model for this session: {session.model or 'Conexgram default'}",
         )
 
     def models(self, chat_id: int, user_id: int, args: list[str]) -> MessageCommandResponse:
         session = self.ensure_session(chat_id, user_id)
         models = self._native_models(chat_id, user_id)
         keyboard: list[list[dict[str, str]]] = []
-        keyboard.append([{"text": "Codex default", "callback_data": "/model default"}])
+        keyboard.append([{"text": "Conexgram default", "callback_data": "/model default"}])
         for model in models[:18]:
             slug = str(model.get("slug") or "").strip()
             if not slug:
@@ -970,7 +990,7 @@ class CommandHandler:
         keyboard.append([{"text": "Reasoning", "callback_data": "/reasoning"}])
         keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
         return MessageCommandResponse(
-            text=f"Session model: {session.model or 'Codex default'}\nChoose a model:",
+            text=f"Session model: {session.model or 'Conexgram default'}\nChoose a model:",
             reply_markup={"inline_keyboard": keyboard},
         )
 
@@ -980,10 +1000,10 @@ class CommandHandler:
             return self._reasoning_menu(chat_id, user_id)
         value = args[0].lower()
         if value in {"default", "none", "off"}:
-            session.reasoning_effort = None
+            session.reasoning_effort = self.config.codex.reasoning_effort or DEFAULT_REASONING_EFFORT
             self.store.update(session)
             return MessageCommandResponse(
-                text="Session reasoning: Codex default",
+                text=f"Session reasoning: {session.reasoning_effort}",
                 reply_markup={"inline_keyboard": [[{"text": "Main menu", "callback_data": "/menu"}]]},
             )
         allowed = self._reasoning_levels_for_model(chat_id, user_id, session.model)
@@ -1004,7 +1024,11 @@ class CommandHandler:
             if len(args) < 2 or args[1].lower() in {"menu", "list"}:
                 return self._default_models_menu(chat_id, user_id)
             value = args[1].strip()
-            model = None if value.lower() in {"default", "none", "off", ""} else (self._resolve_model_alias(value) or value)
+            model = (
+                DEFAULT_CODEX_MODEL
+                if value.lower() in {"default", "none", "off", ""}
+                else (self._resolve_model_alias(value) or value)
+            )
             self.config = replace(self.config, codex=replace(self.config.codex, model=model))
             save_config(self.config)
             return self._defaults_menu(prefix=f"Default model: {model or 'Codex default'}")
@@ -1013,7 +1037,7 @@ class CommandHandler:
                 return self._default_reasoning_menu(chat_id, user_id)
             value = args[1].lower()
             if value in {"default", "none", "off"}:
-                reasoning = None
+                reasoning = DEFAULT_REASONING_EFFORT
             elif value in self._reasoning_levels_for_model(chat_id, user_id, self.config.codex.model):
                 reasoning = value
             else:
@@ -1022,9 +1046,16 @@ class CommandHandler:
             save_config(self.config)
             return self._defaults_menu(prefix=f"Default reasoning: {reasoning or 'Codex default'}")
         if target == "clear":
-            self.config = replace(self.config, codex=replace(self.config.codex, model=None, reasoning_effort=None))
+            self.config = replace(
+                self.config,
+                codex=replace(
+                    self.config.codex,
+                    model=DEFAULT_CODEX_MODEL,
+                    reasoning_effort=DEFAULT_REASONING_EFFORT,
+                ),
+            )
             save_config(self.config)
-            return self._defaults_menu(prefix="Defaults cleared.")
+            return self._defaults_menu(prefix="Defaults restored to Conexgram defaults.")
         return "Usage: /defaults [model|reasoning|clear]"
 
     def _native_models(self, chat_id: int, user_id: int) -> list[dict]:
@@ -1102,7 +1133,7 @@ class CommandHandler:
             keyboard.append(row)
         keyboard.append([{"text": "Models", "callback_data": "/models"}])
         keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
-        text = prefix or f"Session reasoning: {session.reasoning_effort or 'Codex default'}"
+        text = prefix or f"Session reasoning: {session.reasoning_effort or 'Conexgram default'}"
         return MessageCommandResponse(text=f"{text}\nChoose reasoning:", reply_markup={"inline_keyboard": keyboard})
 
     def _defaults_menu(self, prefix: str = "") -> MessageCommandResponse:
@@ -1124,7 +1155,7 @@ class CommandHandler:
         )
 
     def _default_models_menu(self, chat_id: int, user_id: int) -> MessageCommandResponse:
-        keyboard: list[list[dict[str, str]]] = [[{"text": "Codex default", "callback_data": "/defaults model default"}]]
+        keyboard: list[list[dict[str, str]]] = [[{"text": "Conexgram default", "callback_data": "/defaults model default"}]]
         for model in self._native_models(chat_id, user_id)[:18]:
             slug = str(model.get("slug") or "").strip()
             if not slug:
@@ -1135,7 +1166,7 @@ class CommandHandler:
             keyboard.append([{"text": self._truncate(label, 52), "callback_data": f"/defaults model {slug}"}])
         keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
         return MessageCommandResponse(
-            text=f"Default model: {self.config.codex.model or 'Codex default'}",
+            text=f"Default model: {self.config.codex.model or 'Conexgram default'}",
             reply_markup={"inline_keyboard": keyboard},
         )
 
@@ -1146,7 +1177,7 @@ class CommandHandler:
         prefix: str = "",
     ) -> MessageCommandResponse:
         levels = self._reasoning_levels_for_model(chat_id, user_id, self.config.codex.model)
-        keyboard: list[list[dict[str, str]]] = [[{"text": "Codex default", "callback_data": "/defaults reasoning default"}]]
+        keyboard: list[list[dict[str, str]]] = [[{"text": "Conexgram default", "callback_data": "/defaults reasoning default"}]]
         row = []
         for level in levels:
             label = level.upper() if level == self.config.codex.reasoning_effort else level.capitalize()
@@ -1157,7 +1188,7 @@ class CommandHandler:
         if row:
             keyboard.append(row)
         keyboard.append([{"text": "Main menu", "callback_data": "/menu"}])
-        text = prefix or f"Default reasoning: {self.config.codex.reasoning_effort or 'Codex default'}"
+        text = prefix or f"Default reasoning: {self.config.codex.reasoning_effort or 'Conexgram default'}"
         return MessageCommandResponse(text=text, reply_markup={"inline_keyboard": keyboard})
 
     def mode(self, chat_id: int, user_id: int, args: list[str]) -> str:

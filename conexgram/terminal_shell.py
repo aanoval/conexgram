@@ -817,9 +817,18 @@ class TerminalShell:
     def _require_session(self) -> Session:
         if self.session is None:
             raise RuntimeError("No active CLI session.")
+        changed = False
+        if self.session.model is None and self.config.codex.model:
+            self.session.model = self.config.codex.model
+            changed = True
+        if self.session.reasoning_effort is None and self.config.codex.reasoning_effort:
+            self.session.reasoning_effort = self.config.codex.reasoning_effort
+            changed = True
         resolved_model = self._resolve_model_alias(self.session.model)
         if resolved_model != self.session.model:
             self.session.model = resolved_model
+            changed = True
+        if changed:
             self.store.update(self.session)
         return self.session
 
@@ -1104,7 +1113,7 @@ class TerminalShell:
                     or self._resolve_model_alias(self.config.codex.model)
                     or "Codex default",
                 ),
-                ("Reasoning", session.reasoning_effort or "Codex default"),
+                ("Reasoning", session.reasoning_effort or self.config.codex.reasoning_effort or "Codex default"),
                 ("Mode", session.mode),
                 ("Turns", str(session.turn_count)),
             ],

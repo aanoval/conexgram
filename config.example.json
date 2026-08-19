@@ -17,8 +17,8 @@
     "chatgpt_host_id": "local",
     "chatgpt_ipc_client_type": "CONEXGRAM",
     "chatgpt_ipc_timeout_seconds": 20,
-    "model": "",
-    "reasoning_effort": "",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "xhigh",
     "mode": "safe",
     "fast_mode": false,
     "full_access": false,
@@ -35,8 +35,8 @@
       "~/ConexgramWorkspace"
     ],
     "model_presets": {
-      "default": "",
-      "fast": "gpt-5.4-mini",
+      "default": "gpt-5.6-luna",
+      "fast": "gpt-5.3-codex-spark",
       "power": "gpt-5.2"
     },
     "presets": {

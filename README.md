@@ -271,8 +271,8 @@ Key fields:
 - `codex.chatgpt_host_id` and `codex.chatgpt_ipc_client_type`
 - `codex.additional_writable_dirs`
 - `codex.workspace_roots`
-- `codex.model`
-- `codex.reasoning_effort` (optional; leave empty to use the Codex default)
+- `codex.model` (default: `gpt-5.6-luna`)
+- `codex.reasoning_effort` (default: `xhigh`)
 - `codex.mode`
 - `codex.full_access`
 - `codex.allow_runtime_full_access`
@@ -294,6 +294,11 @@ Generate a fresh config:
 ```bash
 python3 -m conexgram example-config
 ```
+
+New sessions and resumed sessions without a session-specific override use
+`gpt-5.6-luna` with `xhigh` reasoning. Override either value per session with
+`/model <name>` and `/reasoning <level>`, or change the defaults with
+`/defaults model <name>` and `/defaults reasoning <level>`.
 
 ### Remote ChatGPT/Codex Desktop mode
 

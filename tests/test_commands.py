@@ -283,7 +283,7 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertEqual(menu.reply_markup["inline_keyboard"][1][0]["callback_data"], "/model gpt-native")
             self.assertIsInstance(selected, MessageCommandResponse)
             self.assertEqual(session.model, "gpt-native")
-            self.assertIsNone(handler.config.codex.model)
+            self.assertEqual(handler.config.codex.model, "gpt-5.6-luna")
 
     def test_defaults_menu_updates_config_for_new_sessions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -430,8 +430,39 @@ class CommandHandlerTests(unittest.TestCase):
             self.assertEqual(session.codex_thread_id, "019thread-a")
             self.assertEqual(session.working_dir, str(work.resolve()))
             self.assertEqual(session.title, "Build project A")
-            self.assertEqual(session.model, "gpt-test")
-            self.assertEqual(session.reasoning_effort, "high")
+            self.assertEqual(session.model, "gpt-5.6-luna")
+            self.assertEqual(session.reasoning_effort, "xhigh")
+
+    def test_existing_session_inherits_defaults_until_manually_overridden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            handler = make_handler(tmp)
+            session = handler.store.create(
+                scope_key=handler.scope_key(1, 2),
+                chat_id=1,
+                user_id=2,
+                working_dir=Path(tmp),
+                model=None,
+                reasoning_effort=None,
+            )
+            handler.store.set_active(handler.scope_key(1, 2), session.id)
+
+            resolved = handler.ensure_session(1, 2)
+
+            self.assertEqual(resolved.model, "gpt-5.6-luna")
+            self.assertEqual(resolved.reasoning_effort, "xhigh")
+
+            handler._native_models = lambda chat_id, user_id: [
+                {
+                    "slug": "gpt-5.6-sol",
+                    "display_name": "GPT-5.6-Sol",
+                    "supported_reasoning_levels": [{"effort": "medium"}, {"effort": "high"}],
+                }
+            ]
+            handler.handle_command("/model gpt-5.6-sol", 1, 2)
+            handler.handle_command("/reasoning high", 1, 2)
+
+            self.assertEqual(resolved.model, "gpt-5.6-sol")
+            self.assertEqual(resolved.reasoning_effort, "high")
 
     def test_codex_command_runs_native_binary_without_shell(self):
         with tempfile.TemporaryDirectory() as tmp:

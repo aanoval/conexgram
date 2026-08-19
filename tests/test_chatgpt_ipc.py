@@ -204,7 +204,12 @@ class ChatGPTIPCClientTests(unittest.TestCase):
             client = ChatGPTIPCClient(socket_path=server.path, timeout_seconds=2)
             owner = client.discover_thread_owner("thread-1")
 
-            client.steer_turn("thread-1", owner, "second Telegram message")
+            client.steer_turn(
+                "thread-1",
+                owner,
+                "second Telegram message",
+                "/tmp/conexgram-test-workspace",
+            )
             client.close()
             server.close()
 
@@ -218,6 +223,14 @@ class ChatGPTIPCClientTests(unittest.TestCase):
                 steer["params"]["input"][0]["text"],
                 "second Telegram message",
             )
+            restore_message = steer["params"]["restoreMessage"]
+            resolved_cwd = str(Path("/tmp/conexgram-test-workspace").resolve())
+            self.assertEqual(restore_message["cwd"], resolved_cwd)
+            self.assertEqual(
+                restore_message["context"]["workspaceRoots"],
+                [resolved_cwd],
+            )
+            self.assertEqual(restore_message["context"]["commentAttachments"], [])
 
 
 if __name__ == "__main__":

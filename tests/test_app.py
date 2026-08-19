@@ -441,14 +441,20 @@ class GatewayAppTests(unittest.TestCase):
             session = app.commands.ensure_session(1, 2)
             session.codex_thread_id = "thread-running"
             app.store.update(session)
-            captured: list[tuple[str, str, str]] = []
-            app.codex.steer_ipc_turn = lambda session_id, thread_id, text: (  # type: ignore[method-assign]
-                captured.append((session_id, thread_id, text)) or True
-            )
+            captured: list[tuple[str, str, str, str]] = []
+
+            def capture_steer(session_id, thread_id, text, working_dir=None):
+                captured.append((session_id, thread_id, text, working_dir))
+                return True
+
+            app.codex.steer_ipc_turn = capture_steer  # type: ignore[method-assign]
 
             app._handle_message(TelegramMessage(1, 11, 1, 2, "lanjutkan dengan validasi"))
 
-            self.assertEqual(captured, [(session.id, "thread-running", "lanjutkan dengan validasi")])
+            self.assertEqual(
+                captured,
+                [(session.id, "thread-running", "lanjutkan dengan validasi", session.working_dir)],
+            )
             self.assertTrue(app.queue.empty())
 
     def test_cleanup_uploads_deletes_expired_files_only(self):

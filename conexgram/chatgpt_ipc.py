@@ -271,8 +271,10 @@ class ChatGPTIPCClient:
         conversation_id: str,
         owner_client_id: str,
         user_text: str,
+        cwd: str,
     ) -> dict[str, Any]:
         """Inject a Telegram message into an already-running Desktop turn."""
+        resolved_cwd = str(Path(cwd).expanduser().resolve())
         return self.send_follower_request(
             "thread-follower-steer-turn",
             {
@@ -280,6 +282,18 @@ class ChatGPTIPCClient:
                 "clientUserMessageId": str(uuid.uuid4()),
                 "input": [{"type": "text", "text": user_text.strip(), "text_elements": []}],
                 "serviceTier": "default",
+                # ChatGPT Desktop's private follower handler passes this
+                # object to its steer implementation, which reads
+                # restoreMessage.cwd and restoreMessage.context.  Omitting it
+                # makes the handler fail before it can reach the app-server.
+                "restoreMessage": {
+                    "cwd": resolved_cwd,
+                    "context": {
+                        "workspaceRoots": [resolved_cwd],
+                        "collaborationMode": None,
+                        "commentAttachments": [],
+                    },
+                },
             },
             owner_client_id,
         )

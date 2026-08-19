@@ -472,13 +472,24 @@ class CodexRunner:
         session_id: str,
         conversation_id: str,
         user_text: str,
+        working_dir: Optional[str] = None,
     ) -> bool:
         """Steer an active ChatGPT turn, including one started in Desktop."""
+        cwd = str(
+            Path(working_dir or self.config.default_working_dir)
+            .expanduser()
+            .resolve()
+        )
         with self._lock:
             active_turn = self._ipc_turns.get(session_id)
         if active_turn is not None:
             client, turn = active_turn
-            client.steer_turn(turn.conversation_id, turn.owner_client_id, user_text)
+            client.steer_turn(
+                turn.conversation_id,
+                turn.owner_client_id,
+                user_text,
+                cwd,
+            )
             return True
 
         # A selected thread may already be running in ChatGPT Desktop before
@@ -497,7 +508,7 @@ class CodexRunner:
             except ChatGPTIPCUnavailable:
                 return False
             try:
-                client.steer_turn(conversation_id, owner, user_text)
+                client.steer_turn(conversation_id, owner, user_text, cwd)
             except ChatGPTIPCRequestError as exc:
                 if _is_idle_thread_error(exc):
                     return False

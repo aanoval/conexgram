@@ -119,6 +119,9 @@ class ProgressNotifier:
                     message_ids.append(existing[index])
                     continue
                 except TelegramApiError as exc:
+                    if "message is not modified" in str(exc).lower():
+                        message_ids.append(existing[index])
+                        continue
                     LOG.debug("Failed to edit live mirror message: %s", exc)
                     replaced_ids.append(existing[index])
             try:

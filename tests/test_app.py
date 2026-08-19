@@ -1,16 +1,19 @@
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
 from typing import Optional
 
-from conexgram.app import AttachmentDirective, GatewayApp
+from conexgram.app import AttachmentDirective, GatewayApp, WorkItem
+from conexgram.codex_runner import CodexTurnResult
 from conexgram.commands import FileCommandResponse
 from conexgram.config import AppConfig, CodexConfig, GatewayConfig, TelegramConfig
 from conexgram.session_store import Session
 from conexgram.stt import SttResult
 from conexgram.telegram_api import TelegramMessage
+from conexgram.progress import ProgressHandle
 
 
 def make_app(tmp: str, max_upload_bytes: int = 1024) -> GatewayApp:
@@ -344,6 +347,43 @@ class GatewayAppTests(unittest.TestCase):
             self.assertEqual(len(fake.sent), 2)
             self.assertEqual(fake.sent[0][1], "a" * 100)
             self.assertEqual(fake.sent[1][1], "a" * 50)
+
+    def test_new_turn_starts_a_new_processing_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = make_app(tmp)
+            session = app.commands.ensure_session(1, 2)
+            session.last_live_message_ids = [77]
+            session.last_sent_response_text = "previous final response"
+            app.store.update(session)
+
+            captured: dict[str, object] = {}
+
+            class CaptureProgress:
+                def start(self, session, chat_id, reply_to_message_id, **kwargs):
+                    captured.update(kwargs)
+                    return ProgressHandle(threading.Event())
+
+                def complete(self, handle, chat_id, final_text, success=True):
+                    return [88]
+
+            app.progress = CaptureProgress()  # type: ignore[assignment]
+            app.codex.run_turn = lambda session, user_text, profile_home=None, event_callback=None: CodexTurnResult(  # type: ignore[method-assign]
+                text="new final response",
+                thread_id="new-thread",
+                return_code=0,
+                raw_log_path=root / "raw.jsonl",
+                final_message_path=root / "final.txt",
+            )
+
+            message = TelegramMessage(1, 10, 1, 2, "new prompt")
+            app._process_codex_message(WorkItem(message, session.id, 0))
+
+            self.assertEqual(captured["initial_message_ids"], [])
+            self.assertEqual(captured["initial_content"], "")
+            updated = app.store.get_session(session.id)
+            assert updated is not None
+            self.assertEqual(updated.last_live_message_ids, [88])
 
     def test_cleanup_uploads_deletes_expired_files_only(self):
         with tempfile.TemporaryDirectory() as tmp:

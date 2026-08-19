@@ -309,8 +309,10 @@ class GatewayApp:
             session,
             message.chat_id,
             message.message_id,
-            initial_message_ids=session.last_live_message_ids,
-            initial_content=session.last_sent_response_text or "",
+            # Every new user turn gets its own processing bubble. Never edit
+            # the final response from the previous turn.
+            initial_message_ids=[],
+            initial_content="",
         )
         with self._live_lock:
             self._live_handles[session.id] = progress_handle
@@ -408,7 +410,9 @@ class GatewayApp:
                 session,
                 message.chat_id,
                 message.message_id,
-                initial_message_ids=session.last_live_message_ids,
+                # An external turn also gets a fresh processing bubble; the
+                # previous final response remains immutable in Telegram.
+                initial_message_ids=[],
                 initial_content=snapshot.content or session.last_sent_response_text or "",
             )
             with self._live_lock:
@@ -430,7 +434,7 @@ class GatewayApp:
                 return
             handle = ProgressHandle(
                 threading.Event(),
-                message_ids=session.last_live_message_ids,
+                message_ids=[],
             )
             message_ids = self.progress.render_once(
                 handle,

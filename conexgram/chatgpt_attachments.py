@@ -28,6 +28,28 @@ _BARE_LOCAL_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_])((?:/Users/|/tmp/|/private/tmp/|/Volumes/|~/)[^\s`<>\"')\]]+)"
 )
 _LOCAL_SCHEMES = {"file", "sandbox", "vscode"}
+_FILE_WORD_RE = re.compile(
+    r"\b(?:file|files|berkas|dokumen|document|attachment|lampiran|pdf|zip|gambar|image|foto|photo)\b",
+    re.IGNORECASE,
+)
+_SEND_WORD_RE = re.compile(
+    r"\b(?:send|attach|upload|share|download|kirim|kirimkan|lampirkan|unggah|bagikan|unduh)\b",
+    re.IGNORECASE,
+)
+_DO_NOT_SEND_RE = re.compile(
+    r"\b(?:don['’]?t|do not|jangan|tidak perlu|nggak perlu|tak perlu)\b[^\n]{0,40}"
+    r"\b(?:send|attach|upload|share|download|kirim|lampir|unggah|bagikan|unduh)\b",
+    re.IGNORECASE,
+)
+
+
+def should_send_local_files(user_text: str) -> bool:
+    """Return true only when the user explicitly asks for a file delivery."""
+    if _DO_NOT_SEND_RE.search(user_text):
+        return False
+    if not _SEND_WORD_RE.search(user_text) or not _FILE_WORD_RE.search(user_text):
+        return False
+    return True
 
 
 def extract_local_files(text: str) -> list[ChatGPTLocalFile]:

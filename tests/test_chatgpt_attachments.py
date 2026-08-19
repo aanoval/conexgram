@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from conexgram.chatgpt_attachments import extract_local_files
+from conexgram.chatgpt_attachments import extract_local_files, should_send_local_files
 
 
 class ChatGPTAttachmentTests(unittest.TestCase):
@@ -27,6 +27,12 @@ class ChatGPTAttachmentTests(unittest.TestCase):
         files = extract_local_files("[Cloudflare](https://example.com/file.zip)")
 
         self.assertEqual(files, [])
+
+    def test_send_intent_requires_an_explicit_file_request(self):
+        self.assertTrue(should_send_local_files("please send the generated PDF"))
+        self.assertTrue(should_send_local_files("tolong kirim file hasilnya"))
+        self.assertFalse(should_send_local_files("buatkan file laporan saja"))
+        self.assertFalse(should_send_local_files("jangan kirim semua file otomatis"))
 
 
 if __name__ == "__main__":

@@ -270,9 +270,10 @@ ChatGPT-owned turns receive the original user text only, so the Telegram
 gateway protocol is not displayed as a user message in the Desktop UI. Local
 Markdown links returned by ChatGPT (including `file://`, `sandbox:`, and
 `vscode://` references) are inspected by a separate attachment module and,
-when allowed by the existing workspace/owner/size checks, sent to Telegram
-with the resolved local path included in the response and file caption. The
-normal `codex exec` directive flow is unchanged.
+only when the user explicitly asks to send/attach/upload a file, validated by
+the existing workspace/owner/size checks and sent to Telegram with the
+resolved local path included in the response and file caption. Otherwise the
+link remains text-only. The normal `codex exec` directive flow is unchanged.
 
 The IPC protocol is private to the installed ChatGPT Desktop build, so this
 bridge is deliberately optional and should be retested after Desktop updates.

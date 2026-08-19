@@ -424,7 +424,7 @@ class GatewayAppTests(unittest.TestCase):
             )
 
             app._process_codex_message(
-                WorkItem(TelegramMessage(1, 10, 1, 2, "make artifact"), session.id, 0)
+                WorkItem(TelegramMessage(1, 10, 1, 2, "kirim file artifact"), session.id, 0)
             )
 
             updated = app.store.get_session(session.id)

@@ -15,7 +15,7 @@ from pathlib import Path
 from .codex_runner import CodexRunner
 from .codex_transcript import CodexTranscriptReader
 from .chatgpt_ipc import ChatGPTIPCError
-from .chatgpt_attachments import extract_local_files
+from .chatgpt_attachments import extract_local_files, should_send_local_files
 from .commands import (
     CommandHandler,
     FileCommandResponse,
@@ -398,7 +398,7 @@ class GatewayApp:
 
         chatgpt_attachments: list[FileCommandResponse] = []
         chatgpt_attachment_errors: list[str] = []
-        if result.source == "chatgpt-ipc":
+        if result.source == "chatgpt-ipc" and should_send_local_files(message.text):
             response_text = result.text.strip()
             attachment_directives = [
                 AttachmentDirective(item.path_text, item.display_name)
@@ -417,8 +417,11 @@ class GatewayApp:
                 path_lines.append(f"📎 Local file path: {attachment.path}")
             if path_lines:
                 response_text = response_text + "\n\n" + "\n".join(path_lines)
-        else:
+        elif result.source != "chatgpt-ipc":
             response_text, attachment_directives = self._extract_attachment_directives(result.text)
+        else:
+            response_text = result.text.strip()
+            attachment_directives = []
 
         prefix = ""
         if result.return_code != 0:

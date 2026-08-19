@@ -87,6 +87,11 @@ class Session:
     last_message_at: Optional[str] = None
     turn_count: int = 0
     profile_id: Optional[str] = None
+    last_sent_thread_id: Optional[str] = None
+    last_sent_response_text: Optional[str] = None
+    last_sent_response_hash: Optional[str] = None
+    last_live_message_ids: list[int] = field(default_factory=list)
+    last_live_status: Optional[str] = None
 
 
 @dataclass

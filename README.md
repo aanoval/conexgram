@@ -71,7 +71,7 @@ Good fits:
 - Persistent Codex sessions per chat or per user
 - Session controls like `/new`, `/status`, `/sessions`, `/switch`, `/workspace`
 - Runtime controls like `/model`, `/reasoning`, `/mode`, `/preset`, `/fast`
-- Progress UX like `/typing`, `/progress`, `/silent`, `/tail`
+- Live Codex output controls like `/typing`, `/progress`, `/silent`, `/tail`
 - Telegram file upload into the active workspace
 - Optional Telegram voice/audio transcription before forwarding to Codex
 - Optional local file send-back with `/sendfile`
@@ -364,9 +364,9 @@ Default:
 
 Only files inside known `telegram_uploads/` directories are cleaned. Transcripts already inserted into Codex session context are kept in the session/log history.
 
-## Progress UX
+## Live output UX
 
-Conexgram can show Telegram's `typing...` indicator while Codex is running. Telegram only displays each typing action briefly, so Conexgram refreshes it every few seconds.
+Conexgram mirrors the latest real Codex response into one Telegram message while Codex is running. The message is edited as new Codex content arrives and becomes the final response when the turn completes. Telegram's `typing...` indicator is refreshed every few seconds because each action is short-lived.
 
 Default:
 
@@ -375,13 +375,12 @@ Default:
   "progress": {
     "typing_indicator": true,
     "typing_interval_seconds": 4,
-    "progress_messages": true,
-    "progress_interval_seconds": 60
+    "progress_messages": true
   }
 }
 ```
 
-Set both values to `false` to keep the bot silent until Codex returns the final answer:
+Set `progress_messages` to `false` to hide the live mirror while keeping the final response. Set `typing_indicator` to `false` to hide typing:
 
 ```json
 {

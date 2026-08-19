@@ -41,6 +41,22 @@ class MessageCommandResponse:
     reply_markup: Optional[dict] = None
 
 
+class SwitchCommandResponse(str):
+    """String-compatible switch result with metadata for live thread mirroring."""
+
+    def __new__(
+        cls,
+        text: str,
+        *,
+        session_id: str,
+        thread_id: str,
+    ) -> "SwitchCommandResponse":
+        result = str.__new__(cls, text)
+        result.session_id = session_id
+        result.thread_id = thread_id
+        return result
+
+
 @dataclass(frozen=True)
 class ProfileCommandResponse:
     text: str
@@ -126,7 +142,7 @@ class CommandHandler:
             "commands": [
                 ("/codex", "Run a native Codex CLI command.", "/help cmd codex"),
                 ("/typing", "Control typing indicator.", "/help cmd typing"),
-                ("/progress", "Control progress messages.", "/help cmd progress"),
+                ("/progress", "Control the live Codex response mirror.", "/help cmd progress"),
                 ("/silent", "Quickly silence or restore progress UX.", "/help cmd silent"),
             ],
         },
@@ -148,7 +164,7 @@ class CommandHandler:
         "logs": "/logs [gateway|launchd]\nSend a local log file.",
         "codex": "/codex <args>\nRun a native Codex CLI command through the active Conexgram profile.",
         "typing": "/typing status|on|off|default\nControl typing indicator for this session.",
-        "progress": "/progress status|on|off|default\nControl long-running progress messages.",
+        "progress": "/progress status|on|off|default\nControl the live Codex response mirror.",
         "silent": "/silent status|on|off|default\nQuickly silence or restore progress UX.",
     }
 
@@ -423,7 +439,7 @@ class CommandHandler:
         if command == "/typing":
             return self.toggle_session_bool(chat_id, user_id, args, "typing_indicator", "Typing indicator")
         if command == "/progress":
-            return self.toggle_session_bool(chat_id, user_id, args, "progress_messages", "Progress messages")
+            return self.toggle_session_bool(chat_id, user_id, args, "progress_messages", "Live Codex output")
         if command == "/silent":
             return self.silent(chat_id, user_id, args)
         if command == "/rename":
@@ -681,7 +697,7 @@ class CommandHandler:
             f"- Approval: {session.approval_policy or 'Codex default'}\n"
             f"- Fast mode: {'on' if session.fast_mode else 'off'}\n"
             f"- Typing indicator: {'on' if self._effective_bool(session.typing_indicator, self.config.progress.typing_indicator) else 'off'}\n"
-            f"- Progress messages: {'on' if self._effective_bool(session.progress_messages, self.config.progress.progress_messages) else 'off'}\n"
+            f"- Live Codex output: {'on' if self._effective_bool(session.progress_messages, self.config.progress.progress_messages) else 'off'}\n"
             f"- Turns: {session.turn_count}\n"
             f"- Updated: {session.updated_at}"
         )
@@ -837,10 +853,12 @@ class CommandHandler:
                 session.reasoning_effort = thread.reasoning_effort or session.reasoning_effort
                 self.store.update(session)
                 self.store.set_active(scope_key, session.id)
-                return (
+                return SwitchCommandResponse(
                     f"Switched to Codex thread {thread.id}\n"
                     f"Title: {session.title}\n"
-                    f"Workspace: {session.working_dir}"
+                    f"Workspace: {session.working_dir}",
+                    session_id=session.id,
+                    thread_id=thread.id,
                 )
 
         session = self.store.create(
@@ -857,10 +875,12 @@ class CommandHandler:
         )
         session.codex_thread_id = thread.id
         self.store.update(session)
-        return (
+        return SwitchCommandResponse(
             f"Switched to Codex thread {thread.id}\n"
             f"Title: {session.title}\n"
-            f"Workspace: {session.working_dir}"
+            f"Workspace: {session.working_dir}",
+            session_id=session.id,
+            thread_id=thread.id,
         )
 
     def _codex_index(self, chat_id: int, user_id: int) -> CodexIndex:
@@ -1522,7 +1542,7 @@ class CommandHandler:
         text = (
             f"Settings: {session.model or 'Codex default'} · {session.reasoning_effort or 'default'} · {session.mode}\n"
             f"Sandbox {session.sandbox_mode or 'default'} · Approval {session.approval_policy or 'default'} · "
-            f"Typing {'on' if typing else 'off'} · Progress {'on' if progress else 'off'}"
+            f"Typing {'on' if typing else 'off'} · Live output {'on' if progress else 'off'}"
         )
         keyboard = {
             "inline_keyboard": [

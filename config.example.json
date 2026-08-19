@@ -75,13 +75,6 @@
   "progress": {
     "typing_indicator": true,
     "typing_interval_seconds": 4,
-    "progress_messages": true,
-    "progress_interval_seconds": 60,
-    "messages": [
-      "Still working on it...",
-      "Codex is still running. I will send the result when it finishes.",
-      "Still active, waiting for Codex to finish.",
-      "Processing is taking longer than usual, but the session is still running."
-    ]
+    "progress_messages": true
   }
 }

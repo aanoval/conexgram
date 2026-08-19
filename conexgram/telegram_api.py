@@ -116,6 +116,13 @@ class TelegramClient:
             payload["reply_markup"] = reply_markup
         self._request("editMessageText", payload, timeout=30)
 
+    def delete_message(self, chat_id: int, message_id: int) -> None:
+        self._request(
+            "deleteMessage",
+            {"chat_id": chat_id, "message_id": message_id},
+            timeout=30,
+        )
+
     def set_my_commands(self, commands: list[dict[str, str]]) -> None:
         self._request("setMyCommands", {"commands": commands}, timeout=30)
 

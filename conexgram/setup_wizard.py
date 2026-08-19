@@ -29,7 +29,7 @@ def run_setup(path: Path = DEFAULT_CONFIG_PATH, force: bool = False) -> Path:
     model = _ask("Default Codex model, empty for Codex default", "")
     reasoning = _ask("Default reasoning effort, empty for Codex default", "")
     typing = _yes_no("Show Telegram typing indicator while Codex runs", True)
-    progress = _yes_no("Send progress text every minute during long runs", True)
+    progress = _yes_no("Show live Codex response while it is processing", True)
     runtime_computer = False
     full_access = False
     if mode == "computer":

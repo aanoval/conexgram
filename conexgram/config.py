@@ -65,13 +65,6 @@ class ProgressConfig:
     typing_indicator: bool = True
     typing_interval_seconds: int = 4
     progress_messages: bool = True
-    progress_interval_seconds: int = 60
-    messages: list[str] = field(default_factory=lambda: [
-        "Still working on it...",
-        "Codex is still running. I will send the result when it finishes.",
-        "Still active, waiting for Codex to finish.",
-        "Processing is taking longer than usual, but the session is still running.",
-    ])
 
 
 @dataclass(frozen=True)
@@ -167,13 +160,6 @@ def example_config_text() -> str:
             "typing_indicator": True,
             "typing_interval_seconds": 4,
             "progress_messages": True,
-            "progress_interval_seconds": 60,
-            "messages": [
-                "Still working on it...",
-                "Codex is still running. I will send the result when it finishes.",
-                "Still active, waiting for Codex to finish.",
-                "Processing is taking longer than usual, but the session is still running.",
-            ],
         },
         "stt": {
             "enabled": False,
@@ -244,8 +230,6 @@ def save_config(config: AppConfig) -> None:
             "typing_indicator": config.progress.typing_indicator,
             "typing_interval_seconds": config.progress.typing_interval_seconds,
             "progress_messages": config.progress.progress_messages,
-            "progress_interval_seconds": config.progress.progress_interval_seconds,
-            "messages": config.progress.messages,
         },
         "stt": {
             "enabled": config.stt.enabled,
@@ -392,8 +376,6 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
             typing_indicator=bool(progress_raw.get("typing_indicator", True)),
             typing_interval_seconds=max(2, int(progress_raw.get("typing_interval_seconds", 4))),
             progress_messages=bool(progress_raw.get("progress_messages", True)),
-            progress_interval_seconds=max(10, int(progress_raw.get("progress_interval_seconds", 60))),
-            messages=_progress_messages(progress_raw.get("messages")),
         ),
         stt=_stt_config(stt_raw),
         uploads=_uploads_config(uploads_raw),
@@ -417,14 +399,6 @@ def _workspace_roots(codex_raw: dict[str, Any], default_working_dir: Path) -> li
         if not root.exists() or not root.is_dir():
             raise ValueError(f"codex.workspace_roots contains invalid directory: {root}")
     return roots
-
-
-def _progress_messages(value: Any) -> list[str]:
-    defaults = ProgressConfig().messages
-    if not isinstance(value, list):
-        return defaults
-    messages = [str(item).strip() for item in value if str(item).strip()]
-    return messages or defaults
 
 
 def _stt_config(value: Any) -> SttConfig:

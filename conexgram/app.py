@@ -3,20 +3,29 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import os
 import queue
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .codex_runner import CodexRunner
-from .commands import CommandHandler, FileCommandResponse, MessageCommandResponse, ProfileCommandResponse
+from .codex_transcript import CodexTranscriptReader
+from .commands import (
+    CommandHandler,
+    FileCommandResponse,
+    MessageCommandResponse,
+    ProfileCommandResponse,
+    SwitchCommandResponse,
+)
 from .config import AppConfig
 from .message_format import split_message
 from .paths import ensure_dir
-from .progress import ProgressNotifier
-from .session_store import SessionStore, now_iso
+from .progress import ProgressHandle, ProgressNotifier
+from .session_store import Session, SessionStore, now_iso
 from .stt import LocalSttTranscriber
 from .telegram_api import TelegramClient, TelegramMessage, TelegramApiError
 from typing import Optional, Union
@@ -65,11 +74,18 @@ class GatewayApp:
         )
         self.commands = CommandHandler(config, self.store)
         self.commands.set_notify_callback(self._notify_for_commands)
-        self.progress = ProgressNotifier(self.telegram, config.progress)
+        self.progress = ProgressNotifier(
+            self.telegram,
+            config.progress,
+            max_chars=config.gateway.max_telegram_message_chars,
+        )
         self.stt_transcriber = LocalSttTranscriber(config.stt)
         self.queue: queue.Queue[WorkItem] = queue.Queue()
         self._queue_lock = threading.Lock()
         self._session_generations: dict[str, int] = {}
+        self._live_lock = threading.RLock()
+        self._live_handles: dict[str, ProgressHandle] = {}
+        self._external_watchers: dict[str, threading.Thread] = {}
         self.stop_event = threading.Event()
 
     def _notify_for_commands(self, chat_id: int, text: str) -> None:
@@ -207,6 +223,10 @@ class GatewayApp:
                 self._cancel_session_work(session_id)
             self._respond_command(message, command_response.text, command_response.reply_markup)
             return
+        if isinstance(command_response, SwitchCommandResponse):
+            self._respond_command(message, str(command_response))
+            self._attach_switched_thread(message, command_response)
+            return
         if isinstance(command_response, MessageCommandResponse):
             self._respond_command(message, command_response.text, command_response.reply_markup)
             return
@@ -285,7 +305,15 @@ class GatewayApp:
         session = self.store.get_session(item.session_id)
         if session is None or not self._work_is_current(item):
             return
-        progress_handle = self.progress.start(session, message.chat_id, message.message_id)
+        progress_handle = self.progress.start(
+            session,
+            message.chat_id,
+            message.message_id,
+            initial_message_ids=session.last_live_message_ids,
+            initial_content=session.last_sent_response_text or "",
+        )
+        with self._live_lock:
+            self._live_handles[session.id] = progress_handle
         try:
             profile_home = self.commands.active_profile_home(message.chat_id, message.user_id)
             result = self.codex.run_turn(
@@ -294,13 +322,25 @@ class GatewayApp:
                 profile_home=profile_home,
                 event_callback=progress_handle.update_from_event,
             )
-        finally:
-            progress_handle.stop()
-
-        if not self._work_is_current(item):
+        except Exception:
+            LOG.exception("Codex turn failed")
+            error_text = "Gateway error while processing this message."
+            message_ids = self.progress.complete(progress_handle, message.chat_id, final_text=error_text, success=False)
+            session.last_sent_thread_id = session.codex_thread_id
+            session.last_sent_response_text = error_text
+            session.last_sent_response_hash = self._response_hash(error_text)
+            session.last_live_message_ids = message_ids
+            session.last_live_status = "final"
+            self.store.update(session)
+            with self._live_lock:
+                self._live_handles.pop(session.id, None)
             return
 
-        self.progress.complete(progress_handle, message.chat_id, success=result.return_code == 0)
+        if not self._work_is_current(item):
+            progress_handle.stop()
+            with self._live_lock:
+                self._live_handles.pop(session.id, None)
+            return
 
         if result.thread_id and not session.codex_thread_id:
             session.codex_thread_id = result.thread_id
@@ -316,8 +356,22 @@ class GatewayApp:
         if result.return_code != 0:
             prefix = f"Codex exited with code {result.return_code}.\n\n"
         text_to_send = (prefix + response_text).strip()
-        if text_to_send:
-            self._send_final_response(message.chat_id, text_to_send)
+        if not text_to_send:
+            text_to_send = "Codex finished without a final response."
+        message_ids = self.progress.complete(
+            progress_handle,
+            message.chat_id,
+            final_text=text_to_send,
+            success=result.return_code == 0,
+        )
+        session.last_sent_thread_id = session.codex_thread_id
+        session.last_sent_response_text = text_to_send
+        session.last_sent_response_hash = self._response_hash(text_to_send)
+        session.last_live_message_ids = message_ids
+        session.last_live_status = "final"
+        self.store.update(session)
+        with self._live_lock:
+            self._live_handles.pop(session.id, None)
 
         for directive in attachment_directives:
             attachment = self._prepare_attachment(directive, session)
@@ -330,6 +384,129 @@ class GatewayApp:
                 attachment.caption,
                 reply_to_message_id=message.message_id,
             )
+
+    def _attach_switched_thread(
+        self,
+        message: TelegramMessage,
+        switch: SwitchCommandResponse,
+    ) -> None:
+        session = self.store.get_session(switch.session_id)
+        if session is None:
+            return
+
+        with self._live_lock:
+            live_handle = self._live_handles.get(session.id)
+        if live_handle is not None:
+            return
+
+        self._stop_other_external_watchers(session.scope_key, session.id)
+        profile_home = self.commands.active_profile_home(message.chat_id, message.user_id)
+        snapshot = CodexTranscriptReader(profile_home).snapshot(switch.thread_id)
+
+        if snapshot.processing:
+            handle = self.progress.start(
+                session,
+                message.chat_id,
+                message.message_id,
+                initial_message_ids=session.last_live_message_ids,
+                initial_content=snapshot.content or session.last_sent_response_text or "",
+            )
+            with self._live_lock:
+                self._live_handles[session.id] = handle
+            watcher = threading.Thread(
+                target=self._watch_external_thread,
+                args=(session, message, switch.thread_id, profile_home, handle),
+                name=f"thread-watch-{switch.thread_id[:8]}",
+                daemon=True,
+            )
+            with self._live_lock:
+                self._external_watchers[session.id] = watcher
+            watcher.start()
+            return
+
+        if snapshot.final and snapshot.content:
+            response_hash = self._response_hash(snapshot.content)
+            if response_hash == session.last_sent_response_hash:
+                return
+            handle = ProgressHandle(
+                threading.Event(),
+                message_ids=session.last_live_message_ids,
+            )
+            message_ids = self.progress.render_once(
+                handle,
+                message.chat_id,
+                snapshot.content,
+                processing=False,
+            )
+            self._record_final_response(session, snapshot.content, message_ids, switch.thread_id)
+
+    def _watch_external_thread(
+        self,
+        session: Session,
+        message: TelegramMessage,
+        thread_id: str,
+        profile_home: Path,
+        handle: ProgressHandle,
+    ) -> None:
+        reader = CodexTranscriptReader(profile_home)
+        try:
+            while not self.stop_event.is_set() and not handle.stop_event.is_set():
+                current = self.store.get_session(session.id)
+                if current is None or self.store.get_active(session.scope_key) is None:
+                    break
+                if self.store.get_active(session.scope_key).id != session.id:
+                    break
+                snapshot = reader.snapshot(thread_id)
+                if snapshot.content != handle.latest_content or snapshot.processing != handle.processing:
+                    handle.set_content(snapshot.content or handle.latest_content, processing=snapshot.processing)
+                if not snapshot.processing:
+                    if snapshot.final and snapshot.content:
+                        message_ids = self.progress.render_once(
+                            handle,
+                            message.chat_id,
+                            snapshot.content,
+                            processing=False,
+                        )
+                        self._record_final_response(current, snapshot.content, message_ids, thread_id)
+                    break
+                time.sleep(0.5)
+        finally:
+            handle.stop()
+            with self._live_lock:
+                if self._live_handles.get(session.id) is handle:
+                    self._live_handles.pop(session.id, None)
+                self._external_watchers.pop(session.id, None)
+
+    def _stop_other_external_watchers(self, scope_key: str, keep_session_id: str) -> None:
+        with self._live_lock:
+            sessions = list(self.store.list_for_scope(scope_key))
+            handles = [
+                self._live_handles.get(item.id)
+                for item in sessions
+                if item.id != keep_session_id
+            ]
+        for handle in handles:
+            if handle is not None:
+                handle.stop()
+
+    def _record_final_response(
+        self,
+        session,
+        text: str,
+        message_ids: list[int],
+        thread_id: str,
+    ) -> None:
+        session.last_sent_thread_id = thread_id
+        session.last_sent_response_text = text
+        session.last_sent_response_hash = self._response_hash(text)
+        session.last_live_message_ids = message_ids
+        session.last_live_status = "final"
+        self.store.update(session)
+
+    @staticmethod
+    def _response_hash(text: str) -> str:
+        normalized = unicodedata.normalize("NFC", text.replace("\r\n", "\n")).strip()
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     def _handle_upload(self, message: TelegramMessage) -> Optional[UploadedTelegramMedia]:
         session = self.commands.ensure_session(message.chat_id, message.user_id)

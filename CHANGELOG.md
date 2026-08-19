@@ -4,6 +4,12 @@ All notable changes to Conexgram will be documented in this file.
 
 The format follows a simple versioned changelog, and this project uses semantic versioning before `1.0.0` with alpha releases for early public testing.
 
+## Unreleased
+
+- Document the private personal-Mac configuration for browsing existing Codex
+  threads from the user's home directory without making the broad scope a
+  default for all installations.
+
 ## 0.2.0
 
 ### Changed

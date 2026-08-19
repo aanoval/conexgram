@@ -25,6 +25,26 @@ Recommended default:
 }
 ```
 
+### Private personal Mac with existing Codex threads
+
+If Conexgram is a private, owner-only bot on a personal Mac and the `/sessions`
+thread browser must reach existing Codex workspaces across the home directory,
+use the home directory as the workspace root while keeping the default working
+directory focused on a normal project:
+
+```json
+{
+  "codex": {
+    "default_working_dir": "~/ConexgramWorkspace",
+    "workspace_roots": ["~"]
+  }
+}
+```
+
+This permits `/workspace`, `/cwd`, and `/sendfile` to address any path under the
+user home directory. Use it only with a private Telegram allowlist and never
+replace `~` with `/`, which would include the whole macOS filesystem.
+
 ### Computer Access
 
 Computer Access maps to Codex full-access execution. It can give Codex broad local machine access.

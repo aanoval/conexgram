@@ -12,6 +12,11 @@
   "codex": {
     "binary": "conexgram",
     "default_working_dir": "~/ConexgramWorkspace",
+    "chatgpt_ipc_enabled": true,
+    "chatgpt_ipc_socket": "~/.codex/ipc/ipc.sock",
+    "chatgpt_host_id": "local",
+    "chatgpt_ipc_client_type": "CONEXGRAM",
+    "chatgpt_ipc_timeout_seconds": 20,
     "model": "",
     "reasoning_effort": "",
     "mode": "safe",

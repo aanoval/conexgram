@@ -29,6 +29,11 @@ class TelegramConfig:
 class CodexConfig:
     binary: str = "conexgram"
     default_working_dir: Path = Path.cwd()
+    chatgpt_ipc_enabled: bool = True
+    chatgpt_ipc_socket: Optional[Path] = None
+    chatgpt_host_id: str = "local"
+    chatgpt_ipc_client_type: str = "CONEXGRAM"
+    chatgpt_ipc_timeout_seconds: int = 20
     model: Optional[str] = None
     reasoning_effort: Optional[str] = None
     mode: str = "safe"
@@ -113,6 +118,11 @@ def example_config_text() -> str:
         "codex": {
             "binary": "conexgram",
             "default_working_dir": str(Path.home() / "ConexgramWorkspace"),
+            "chatgpt_ipc_enabled": True,
+            "chatgpt_ipc_socket": str(Path.home() / ".codex" / "ipc" / "ipc.sock"),
+            "chatgpt_host_id": "local",
+            "chatgpt_ipc_client_type": "CONEXGRAM",
+            "chatgpt_ipc_timeout_seconds": 20,
             "model": "",
             "reasoning_effort": "",
             "mode": "safe",
@@ -198,6 +208,15 @@ def save_config(config: AppConfig) -> None:
         "codex": {
             "binary": config.codex.binary,
             "default_working_dir": str(config.codex.default_working_dir),
+            "chatgpt_ipc_enabled": config.codex.chatgpt_ipc_enabled,
+            "chatgpt_ipc_socket": (
+                str(config.codex.chatgpt_ipc_socket)
+                if config.codex.chatgpt_ipc_socket is not None
+                else ""
+            ),
+            "chatgpt_host_id": config.codex.chatgpt_host_id,
+            "chatgpt_ipc_client_type": config.codex.chatgpt_ipc_client_type,
+            "chatgpt_ipc_timeout_seconds": config.codex.chatgpt_ipc_timeout_seconds,
             "model": config.codex.model or "",
             "reasoning_effort": config.codex.reasoning_effort or "",
             "mode": config.codex.mode,
@@ -330,6 +349,20 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         codex=CodexConfig(
             binary=codex_binary,
             default_working_dir=working_dir,
+            chatgpt_ipc_enabled=bool(codex_raw.get("chatgpt_ipc_enabled", True)),
+            chatgpt_ipc_socket=(
+                expand_path(codex_raw["chatgpt_ipc_socket"])
+                if str(codex_raw.get("chatgpt_ipc_socket", "")).strip()
+                else None
+            ),
+            chatgpt_host_id=str(codex_raw.get("chatgpt_host_id", "local")).strip() or "local",
+            chatgpt_ipc_client_type=(
+                str(codex_raw.get("chatgpt_ipc_client_type", "CONEXGRAM")).strip()
+                or "CONEXGRAM"
+            ),
+            chatgpt_ipc_timeout_seconds=max(
+                5, int(codex_raw.get("chatgpt_ipc_timeout_seconds", 20))
+            ),
             model=model,
             reasoning_effort=reasoning_effort,
             mode=mode,

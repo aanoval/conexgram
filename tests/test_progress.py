@@ -77,6 +77,20 @@ class ProgressNotifierTests(unittest.TestCase):
 
         self.assertEqual(telegram.sent, [(10, "⏳ Processing…", None)])
 
+    def test_interaction_notice_is_in_new_processing_bubble_and_removed_on_completion(self):
+        telegram = FakeTelegram()
+        notifier = ProgressNotifier(telegram, ProgressConfig())
+        handle = ProgressHandle(threading.Event())
+        handle.update_from_event({
+            "type": "conexgram.interaction.requested",
+            "request": {"method": "item/commandExecution/requestApproval", "id": "r1"},
+        })
+
+        notifier.render_once(handle, 10, "previous stream", processing=True)
+        self.assertIn("Approval needed for a command", telegram.sent[0][1])
+        notifier.complete(handle, 10, final_text="Final output")
+        self.assertEqual(telegram.edited[-1], (10, 101, "Final output"))
+
     def test_stale_chunks_are_deleted_when_final_response_shrinks(self):
         telegram = FakeTelegram()
         notifier = ProgressNotifier(telegram, ProgressConfig(), max_chars=100)

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .codex_runner import CodexRunner
 from .codex_transcript import CodexTranscriptReader
+from .chatgpt_ipc import ChatGPTIPCError
 from .commands import (
     CommandHandler,
     FileCommandResponse,
@@ -85,6 +86,7 @@ class GatewayApp:
         self._session_generations: dict[str, int] = {}
         self._live_lock = threading.RLock()
         self._live_handles: dict[str, ProgressHandle] = {}
+        self._pending_ipc_requests: dict[str, dict] = {}
         self._external_watchers: dict[str, threading.Thread] = {}
         self.stop_event = threading.Event()
 
@@ -200,6 +202,9 @@ class GatewayApp:
                 )
             return
 
+        if self._try_submit_ipc_response(message):
+            return
+
         command_response = self.commands.handle_command(message.text, message.chat_id, message.user_id)
         if command_response == "__STOP_CODEX__":
             session = self.commands.ensure_session(message.chat_id, message.user_id)
@@ -250,6 +255,29 @@ class GatewayApp:
                 f"Queued for Codex session {session.id[:8]}.",
                 message.message_id,
             )
+
+    def _try_submit_ipc_response(self, message: TelegramMessage) -> bool:
+        """Use a plain Telegram reply as the response to a pending app request."""
+        if message.text.startswith("/"):
+            command = message.text.split(maxsplit=1)[0].split("@", 1)[0].lower()
+            if command not in {"/yes", "/no", "/allow", "/approve", "/deny", "/reject"}:
+                return False
+        session = self.commands.ensure_session(message.chat_id, message.user_id)
+        with self._live_lock:
+            request = self._pending_ipc_requests.get(session.id)
+        if request is None:
+            return False
+        try:
+            self.codex.submit_ipc_interaction(session.id, request, message.text.lstrip("/").strip())
+        except ChatGPTIPCError as exc:
+            self._send(message.chat_id, f"Could not submit the ChatGPT request: {exc}", message.message_id)
+            return True
+        with self._live_lock:
+            self._pending_ipc_requests.pop(session.id, None)
+            handle = self._live_handles.get(session.id)
+        if handle is not None:
+            handle.clear_interaction_notice()
+        return True
 
     def _enqueue_work(self, message: TelegramMessage, session_id: str) -> None:
         with self._queue_lock:
@@ -318,11 +346,24 @@ class GatewayApp:
             self._live_handles[session.id] = progress_handle
         try:
             profile_home = self.commands.active_profile_home(message.chat_id, message.user_id)
+
+            def on_codex_event(event: dict) -> None:
+                progress_handle.update_from_event(event)
+                event_type = event.get("type")
+                if event_type == "conexgram.interaction.requested":
+                    request = event.get("request")
+                    if isinstance(request, dict):
+                        with self._live_lock:
+                            self._pending_ipc_requests[session.id] = request
+                elif event_type in {"turn.completed", "turn.failed", "turn.interrupted"}:
+                    with self._live_lock:
+                        self._pending_ipc_requests.pop(session.id, None)
+
             result = self.codex.run_turn(
                 session,
                 message.text,
                 profile_home=profile_home,
-                event_callback=progress_handle.update_from_event,
+                event_callback=on_codex_event,
             )
         except Exception:
             LOG.exception("Codex turn failed")
@@ -336,12 +377,14 @@ class GatewayApp:
             self.store.update(session)
             with self._live_lock:
                 self._live_handles.pop(session.id, None)
+                self._pending_ipc_requests.pop(session.id, None)
             return
 
         if not self._work_is_current(item):
             progress_handle.stop()
             with self._live_lock:
                 self._live_handles.pop(session.id, None)
+                self._pending_ipc_requests.pop(session.id, None)
             return
 
         if result.thread_id and not session.codex_thread_id:
@@ -374,6 +417,7 @@ class GatewayApp:
         self.store.update(session)
         with self._live_lock:
             self._live_handles.pop(session.id, None)
+            self._pending_ipc_requests.pop(session.id, None)
 
         for directive in attachment_directives:
             attachment = self._prepare_attachment(directive, session)

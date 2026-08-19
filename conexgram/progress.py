@@ -71,6 +71,7 @@ class ProgressNotifier:
         text = final_text.strip() or handle.latest_content.strip()
         if not text:
             text = "Codex finished without a final response."
+        handle.clear_interaction_notice()
         handle.set_content(text, processing=False)
         message_ids = self._render(handle, chat_id)
         handle.stop()
@@ -171,6 +172,7 @@ class ProgressHandle:
         self._message_ids = list(message_ids or [])
         self._latest_content = content.strip()
         self._processing = True
+        self._interaction_notice = ""
         self.live_updates = live_updates
         self._lock = threading.RLock()
 
@@ -213,15 +215,47 @@ class ProgressHandle:
             self._latest_content = text.strip()
             self._processing = processing
 
+    def set_interaction_notice(self, request: dict) -> None:
+        method = str(request.get("method") or "ChatGPT interaction")
+        params = request.get("params")
+        params = params if isinstance(params, dict) else {}
+        if method == "item/commandExecution/requestApproval":
+            notice = "Approval needed for a command. Reply yes/allow or no/deny."
+        elif method == "item/fileChange/requestApproval":
+            notice = "Approval needed for a file change. Reply yes/allow or no/deny."
+        elif method == "item/permissions/requestApproval":
+            notice = "Permission request from ChatGPT. Reply yes/allow or no/deny."
+        elif method == "mcpServer/elicitation/request":
+            notice = "ChatGPT is asking for an external-tool response. Reply with your answer, or no/deny."
+        else:
+            question = params.get("question")
+            notice = str(question).strip() if isinstance(question, str) and question.strip() else (
+                "ChatGPT is asking for input. Reply with the answer."
+            )
+        with self._lock:
+            self._interaction_notice = notice
+
+    def clear_interaction_notice(self) -> None:
+        with self._lock:
+            self._interaction_notice = ""
+
     def render_text(self, processing_marker: str) -> str:
         with self._lock:
+            parts: list[str] = []
+            if self._latest_content:
+                parts.append(self._latest_content)
+            if self._interaction_notice:
+                parts.append(f"⚠️ {self._interaction_notice}")
             if self._processing:
-                if self._latest_content:
-                    return f"{self._latest_content}\n\n{processing_marker}"
-                return processing_marker
-            return self._latest_content
+                parts.append(processing_marker)
+            return "\n\n".join(parts)
 
     def update_from_event(self, event: dict) -> None:
+        if event.get("type") == "conexgram.interaction.requested":
+            request = event.get("request")
+            if isinstance(request, dict):
+                self.set_interaction_notice(request)
+            return
         item = event.get("item")
         if not isinstance(item, dict):
             payload = event.get("payload")

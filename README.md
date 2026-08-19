@@ -228,6 +228,9 @@ Key fields:
 - `telegram.allowed_chat_ids`
 - `codex.binary`
 - `codex.default_working_dir`
+- `codex.chatgpt_ipc_enabled` (use the local ChatGPT Desktop owner for existing threads)
+- `codex.chatgpt_ipc_socket` (default: `~/.codex/ipc/ipc.sock`)
+- `codex.chatgpt_host_id` and `codex.chatgpt_ipc_client_type`
 - `codex.additional_writable_dirs`
 - `codex.workspace_roots`
 - `codex.model`
@@ -253,6 +256,18 @@ Generate a fresh config:
 ```bash
 python3 -m conexgram example-config
 ```
+
+### ChatGPT Desktop thread bridge
+
+When enabled, an existing local thread is routed through ChatGPT Desktop's
+user-owned local IPC router. Conexgram follows the Desktop owner for realtime
+state, forwards Telegram prompts and approval/input replies, and leaves the
+Desktop app-server as the thread owner. If the socket is unavailable or the
+Desktop app does not own the thread, Conexgram falls back to its normal Codex
+CLI runner without duplicating a request that was already accepted by Desktop.
+
+The IPC protocol is private to the installed ChatGPT Desktop build, so this
+bridge is deliberately optional and should be retested after Desktop updates.
 
 ## Commands
 

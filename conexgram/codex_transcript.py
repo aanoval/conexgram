@@ -22,6 +22,8 @@ class CodexThreadSnapshot:
     processing: bool
     final: bool
     source_path: Optional[Path] = None
+    source_mtime: float = 0.0
+    complete: bool = False
 
 
 class CodexTranscriptReader:
@@ -34,7 +36,7 @@ class CodexTranscriptReader:
     def snapshot(self, thread_id: str) -> CodexThreadSnapshot:
         path = self._latest_rollout(thread_id)
         if path is None:
-            return CodexThreadSnapshot(thread_id, "", False, False, None)
+            return CodexThreadSnapshot(thread_id, "", False, False, None, 0.0, False)
 
         latest_content = ""
         latest_task_started = False
@@ -77,16 +79,26 @@ class CodexTranscriptReader:
                         latest_content = text
 
         except OSError:
-            return CodexThreadSnapshot(thread_id, "", False, False, path)
+            return CodexThreadSnapshot(thread_id, "", False, False, path, 0.0, False)
 
         try:
-            stale = time.time() - path.stat().st_mtime > self.stale_after_seconds
+            source_mtime = path.stat().st_mtime
+            stale = time.time() - source_mtime > self.stale_after_seconds
         except OSError:
+            source_mtime = 0.0
             stale = True
 
         processing = latest_task_started and not latest_task_completed and not stale
         final = bool(latest_content) and not processing and saw_task_complete
-        return CodexThreadSnapshot(thread_id, latest_content, processing, final, path)
+        return CodexThreadSnapshot(
+            thread_id,
+            latest_content,
+            processing,
+            final,
+            path,
+            source_mtime,
+            saw_task_complete,
+        )
 
     def _latest_rollout(self, thread_id: str) -> Optional[Path]:
         roots = [self.profile_home / ".codex" / "sessions", Path.home() / ".codex" / "sessions"]

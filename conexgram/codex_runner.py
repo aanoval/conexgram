@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .config import CodexConfig
-from .chatgpt_ipc import ChatGPTIPCClient, ChatGPTIPCError, ChatGPTIPCUnavailable, ChatGPTIPCTurn
+from .chatgpt_ipc import (
+    ChatGPTIPCClient,
+    ChatGPTIPCError,
+    ChatGPTIPCRequestError,
+    ChatGPTIPCUnavailable,
+    ChatGPTIPCTurn,
+)
 from .codex_transcript import CodexTranscriptReader
 from .paths import ensure_dir, workspace_access_error
 from .session_store import Session, now_iso
@@ -460,6 +466,45 @@ class CodexRunner:
         client, turn = ipc_turn
         method, params = self._build_ipc_interaction(request, turn.conversation_id, user_text)
         client.send_follower_request(method, params, turn.owner_client_id)
+
+    def steer_ipc_turn(
+        self,
+        session_id: str,
+        conversation_id: str,
+        user_text: str,
+    ) -> bool:
+        """Steer an active ChatGPT turn, including one started in Desktop."""
+        with self._lock:
+            active_turn = self._ipc_turns.get(session_id)
+        if active_turn is not None:
+            client, turn = active_turn
+            client.steer_turn(turn.conversation_id, turn.owner_client_id, user_text)
+            return True
+
+        # A selected thread may already be running in ChatGPT Desktop before
+        # Conexgram receives the Telegram message.  Use a short-lived follower
+        # connection for that case; the existing transcript watcher mirrors the
+        # result back to Telegram.
+        client = ChatGPTIPCClient(
+            socket_path=self.config.chatgpt_ipc_socket,
+            host_id=self.config.chatgpt_host_id,
+            client_type=self.config.chatgpt_ipc_client_type,
+            timeout_seconds=self.config.chatgpt_ipc_timeout_seconds,
+        )
+        try:
+            try:
+                owner = client.discover_thread_owner(conversation_id)
+            except ChatGPTIPCUnavailable:
+                return False
+            try:
+                client.steer_turn(conversation_id, owner, user_text)
+            except ChatGPTIPCRequestError as exc:
+                if _is_idle_thread_error(exc):
+                    return False
+                raise
+            return True
+        finally:
+            client.close()
 
     @staticmethod
     def _build_ipc_interaction(
@@ -1052,3 +1097,17 @@ def _find_request_collection(value: object) -> Optional[list[dict]]:
             if found is not None:
                 return found
     return None
+
+
+def _is_idle_thread_error(error: ChatGPTIPCRequestError) -> bool:
+    message = str(error).lower()
+    return any(
+        phrase in message
+        for phrase in (
+            "not being streamed",
+            "not streaming",
+            "no active turn",
+            "not in progress",
+            "conversation is not being streamed",
+        )
+    )

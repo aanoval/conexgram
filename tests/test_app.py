@@ -434,6 +434,23 @@ class GatewayAppTests(unittest.TestCase):
             self.assertEqual(fake.documents[0][1], path.resolve())
             self.assertIn(str(path.resolve()), fake.documents[0][2] or "")
 
+    def test_message_steers_active_chatgpt_turn_instead_of_queueing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            app.commands.active_profile_has_auth = lambda chat_id, user_id: True  # type: ignore[method-assign]
+            session = app.commands.ensure_session(1, 2)
+            session.codex_thread_id = "thread-running"
+            app.store.update(session)
+            captured: list[tuple[str, str, str]] = []
+            app.codex.steer_ipc_turn = lambda session_id, thread_id, text: (  # type: ignore[method-assign]
+                captured.append((session_id, thread_id, text)) or True
+            )
+
+            app._handle_message(TelegramMessage(1, 11, 1, 2, "lanjutkan dengan validasi"))
+
+            self.assertEqual(captured, [(session.id, "thread-running", "lanjutkan dengan validasi")])
+            self.assertTrue(app.queue.empty())
+
     def test_cleanup_uploads_deletes_expired_files_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = make_app(tmp)

@@ -275,6 +275,12 @@ the existing workspace/owner/size checks and sent to Telegram with the
 resolved local path included in the response and file caption. Otherwise the
 link remains text-only. The normal `codex exec` directive flow is unchanged.
 
+When a Telegram message arrives while a ChatGPT-owned turn is still running,
+Conexgram forwards it with the Desktop follower `steer-turn` operation instead
+of waiting in the gateway queue. This applies both to turns started by
+Conexgram and to a selected thread that was already running in ChatGPT
+Desktop. CLI turns retain the existing queue behavior.
+
 The IPC protocol is private to the installed ChatGPT Desktop build, so this
 bridge is deliberately optional and should be retested after Desktop updates.
 

@@ -249,6 +249,13 @@ class GatewayApp:
             return
 
         session = self.commands.ensure_session(message.chat_id, message.user_id)
+        if session.codex_thread_id:
+            try:
+                if self.codex.steer_ipc_turn(session.id, session.codex_thread_id, message.text):
+                    return
+            except ChatGPTIPCError as exc:
+                self._send(message.chat_id, f"Could not steer the active ChatGPT turn: {exc}", message.message_id)
+                return
         self._enqueue_work(message, session.id)
         if self.config.gateway.send_ack:
             self._send(

@@ -84,6 +84,14 @@ class FakeChatGPTIPCServer:
                             "method": method,
                             "result": {"ok": True},
                         })
+                    elif method == "thread-follower-steer-turn":
+                        self._send(connection, {
+                            "type": "response",
+                            "requestId": message["requestId"],
+                            "resultType": "success",
+                            "method": method,
+                            "result": {"ok": True},
+                        })
         finally:
             server.close()
 
@@ -188,6 +196,28 @@ class ChatGPTIPCClientTests(unittest.TestCase):
             params["response"],
             {"answers": {"choice": {"answers": ["answer from Telegram"]}}},
         )
+
+    def test_steer_turn_forwards_plain_input_to_running_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server = FakeChatGPTIPCServer(Path(tmp))
+            server.start()
+            client = ChatGPTIPCClient(socket_path=server.path, timeout_seconds=2)
+            owner = client.discover_thread_owner("thread-1")
+
+            client.steer_turn("thread-1", owner, "second Telegram message")
+            client.close()
+            server.close()
+
+            steer = next(
+                item for item in server.requests
+                if item.get("method") == "thread-follower-steer-turn"
+            )
+            self.assertEqual(steer["targetClientId"], "owner-1")
+            self.assertEqual(steer["params"]["conversationId"], "thread-1")
+            self.assertEqual(
+                steer["params"]["input"][0]["text"],
+                "second Telegram message",
+            )
 
 
 if __name__ == "__main__":

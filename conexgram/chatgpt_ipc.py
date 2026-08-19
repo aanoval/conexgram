@@ -266,6 +266,24 @@ class ChatGPTIPCClient:
             target_client_id=turn.owner_client_id,
         )
 
+    def steer_turn(
+        self,
+        conversation_id: str,
+        owner_client_id: str,
+        user_text: str,
+    ) -> dict[str, Any]:
+        """Inject a Telegram message into an already-running Desktop turn."""
+        return self.send_follower_request(
+            "thread-follower-steer-turn",
+            {
+                "conversationId": conversation_id,
+                "clientUserMessageId": str(uuid.uuid4()),
+                "input": [{"type": "text", "text": user_text.strip(), "text_elements": []}],
+                "serviceTier": "default",
+            },
+            owner_client_id,
+        )
+
     def send_follower_request(
         self,
         method: str,

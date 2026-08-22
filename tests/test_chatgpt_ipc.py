@@ -4,11 +4,13 @@ import struct
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from typing import Optional
 
 from conexgram.chatgpt_ipc import ChatGPTIPCClient, ChatGPTIPCUnavailable
 from conexgram.codex_runner import CodexRunner
+from conexgram.config import CodexConfig
 
 
 class FakeChatGPTIPCServer:
@@ -231,6 +233,86 @@ class ChatGPTIPCClientTests(unittest.TestCase):
                 [resolved_cwd],
             )
             self.assertEqual(restore_message["context"]["commentAttachments"], [])
+
+    def test_ended_external_turn_does_not_attempt_to_steer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_home = Path(tmp)
+            rollout_dir = profile_home / ".codex" / "sessions" / "2026" / "08" / "22"
+            rollout_dir.mkdir(parents=True)
+            rollout = rollout_dir / "rollout-2026-08-22T00-00-00-thread-ended.jsonl"
+            rollout.write_text(
+                json.dumps({
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                })
+                + "\n"
+                + json.dumps({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "last_agent_message": "previous answer",
+                    },
+                })
+                + "\n",
+                encoding="utf-8",
+            )
+            runner = CodexRunner(
+                CodexConfig(
+                    binary="codex",
+                    default_working_dir=profile_home,
+                    chatgpt_ipc_socket=profile_home / "missing-ipc.sock",
+                ),
+                profile_home / "logs",
+            )
+            with patch("conexgram.codex_runner.ChatGPTIPCClient") as client_class:
+                self.assertFalse(
+                    runner.steer_ipc_turn(
+                        "session-1",
+                        "thread-ended",
+                        "new normal prompt",
+                        working_dir=str(profile_home),
+                        profile_home=profile_home,
+                    )
+                )
+                client_class.assert_not_called()
+
+    def test_active_external_turn_is_steered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_home = Path(tmp)
+            rollout_dir = profile_home / ".codex" / "sessions" / "2026" / "08" / "22"
+            rollout_dir.mkdir(parents=True)
+            rollout = rollout_dir / "rollout-2026-08-22T00-00-00-thread-active.jsonl"
+            rollout.write_text(
+                json.dumps({
+                    "type": "event_msg",
+                    "payload": {"type": "task_started"},
+                })
+                + "\n",
+                encoding="utf-8",
+            )
+            server = FakeChatGPTIPCServer(profile_home)
+            server.start()
+            runner = CodexRunner(
+                CodexConfig(
+                    binary="codex",
+                    default_working_dir=profile_home,
+                    chatgpt_ipc_socket=server.path,
+                ),
+                profile_home / "logs",
+            )
+            self.assertTrue(
+                runner.steer_ipc_turn(
+                    "session-1",
+                    "thread-active",
+                    "interrupt with this",
+                    working_dir=str(profile_home),
+                    profile_home=profile_home,
+                )
+            )
+            server.close()
+            self.assertTrue(
+                any(item.get("method") == "thread-follower-steer-turn" for item in server.requests)
+            )
 
 
 if __name__ == "__main__":

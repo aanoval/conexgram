@@ -441,10 +441,10 @@ class GatewayAppTests(unittest.TestCase):
             session = app.commands.ensure_session(1, 2)
             session.codex_thread_id = "thread-running"
             app.store.update(session)
-            captured: list[tuple[str, str, str, str]] = []
+            captured: list[tuple[str, str, str, str, object]] = []
 
-            def capture_steer(session_id, thread_id, text, working_dir=None):
-                captured.append((session_id, thread_id, text, working_dir))
+            def capture_steer(session_id, thread_id, text, working_dir=None, profile_home=None):
+                captured.append((session_id, thread_id, text, working_dir, profile_home))
                 return True
 
             app.codex.steer_ipc_turn = capture_steer  # type: ignore[method-assign]
@@ -453,7 +453,13 @@ class GatewayAppTests(unittest.TestCase):
 
             self.assertEqual(
                 captured,
-                [(session.id, "thread-running", "lanjutkan dengan validasi", session.working_dir)],
+                [(
+                    session.id,
+                    "thread-running",
+                    "lanjutkan dengan validasi",
+                    session.working_dir,
+                    app.commands.active_profile_home(1, 2),
+                )],
             )
             self.assertTrue(app.queue.empty())
 

@@ -256,6 +256,7 @@ class GatewayApp:
                     session.codex_thread_id,
                     message.text,
                     working_dir=session.working_dir,
+                    profile_home=self.commands.active_profile_home(message.chat_id, message.user_id),
                 ):
                     return
             except ChatGPTIPCError as exc:

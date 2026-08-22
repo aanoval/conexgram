@@ -473,6 +473,7 @@ class CodexRunner:
         conversation_id: str,
         user_text: str,
         working_dir: Optional[str] = None,
+        profile_home: Optional[Path] = None,
     ) -> bool:
         """Steer an active ChatGPT turn, including one started in Desktop."""
         cwd = str(
@@ -484,13 +485,29 @@ class CodexRunner:
             active_turn = self._ipc_turns.get(session_id)
         if active_turn is not None:
             client, turn = active_turn
-            client.steer_turn(
-                turn.conversation_id,
-                turn.owner_client_id,
-                user_text,
-                cwd,
-            )
+            try:
+                client.steer_turn(
+                    turn.conversation_id,
+                    turn.owner_client_id,
+                    user_text,
+                    cwd,
+                )
+            except ChatGPTIPCRequestError as exc:
+                # The turn can finish between the active-map lookup and the
+                # follower request.  In that race the message must become a
+                # normal new turn instead of surfacing an IPC error to Telegram.
+                if _is_idle_thread_error(exc):
+                    return False
+                raise
             return True
+
+        # A thread can be owned by ChatGPT Desktop even when Conexgram did
+        # not start its current turn.  Owner discovery alone is not enough:
+        # the owner also remains registered after a turn has ended.  Inspect
+        # the local rollout state before sending the private steer request so
+        # ended threads follow the normal new-turn path.
+        if not self._chatgpt_turn_is_active(conversation_id, profile_home):
+            return False
 
         # A selected thread may already be running in ChatGPT Desktop before
         # Conexgram receives the Telegram message.  Use a short-lived follower
@@ -516,6 +533,18 @@ class CodexRunner:
             return True
         finally:
             client.close()
+
+    def _chatgpt_turn_is_active(
+        self,
+        conversation_id: str,
+        profile_home: Optional[Path],
+    ) -> bool:
+        reader = CodexTranscriptReader(
+            profile_home or Path.home(),
+            stale_after_seconds=max(30.0, float(self.config.idle_timeout_seconds)),
+        )
+        snapshot = reader.snapshot(conversation_id)
+        return snapshot.processing
 
     @staticmethod
     def _build_ipc_interaction(
